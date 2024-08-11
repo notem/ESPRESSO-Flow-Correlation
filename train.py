@@ -16,6 +16,7 @@ import json
 import time
 import argparse
 from torch.utils.data import DataLoader
+from torch.optim.lr_scheduler import StepLR
 
 from utils.nets.espressonet import EspressoNet
 from utils.nets.dcfnet import Conv1DModel
@@ -134,6 +135,7 @@ if __name__ == "__main__":
     opt_lr          = 1e-3
     opt_betas       = (0.9, 0.999)
     opt_wd          = 0.001
+    steplr_step_size = 5000
     save_best_epoch = True
     loss_margin = args.loss_margin
     use_same_fen = args.single_fen
@@ -293,7 +295,7 @@ if __name__ == "__main__":
         # construct a triplets dataset object, derived from the base dataset object
         if args.online:  # build a dataset compatible for online mining
             dataset = OnlineDataset(data)
-            b_size = mini_batch_size // 2
+            b_size = mini_batch_size
         else:            # build a dataset for random triplet generation
             dataset = TripletDataset(data)
             b_size = mini_batch_size
@@ -331,6 +333,9 @@ if __name__ == "__main__":
     #                                                            num_cycles = epochs // ckpt_period,
     #                                                            #last_epoch = last_epoch * len(trainloader) if last_epoch
     #                                                            )
+    scheduler = StepLR(optimizer, 
+                        step_size = stepl_step_size, 
+                        gamma = 0.1)
 
     # define checkpoint fname if not provided
     if not checkpoint_fname:
@@ -379,7 +384,7 @@ if __name__ == "__main__":
                     inflow_embed = inflow_fen(inflow)
                     outflow_embed = outflow_fen(outflow)
 
-                    if args.hard:
+                    if args.hard and not eval_only:
                         loss = hard_criterion(inflow_embed, outflow_embed)
                     else:
                         loss = all_criterion(inflow_embed, outflow_embed)
@@ -409,7 +414,7 @@ if __name__ == "__main__":
                     # update weights, update scheduler, and reset optimizer after a full batch is completed
                     if (batch_idx+1) % accum == 0 or batch_idx+1 == len(dataloader):
                         optimizer.step()
-                        #scheduler.step()
+                        scheduler.step()
                         for param in params:
                             param.grad = None
 
