@@ -22,7 +22,6 @@ class TransformerBlock(nn.Module):
                     feedforward_drop = 0.0,
                     feedforward_act = nn.GELU,
                     feedforward_ratio = 4,
-                    skip_toks=0,
                     **kwargs,
                  ):
         super().__init__()
@@ -50,8 +49,6 @@ class TransformerBlock(nn.Module):
 
         self.norm2 = norm_layer(dim)
         self.mlp = mlp(dim=dim)
-
-        self.skip_toks = skip_toks
         
     def forward(self, x, pad_mask=None):
 
@@ -66,8 +63,7 @@ class TransformerBlock(nn.Module):
         x = x.permute(0,2,1)
         x = x + self.drop_path(
                     self.token_mixer(self.norm1(x), 
-                        attn_mask = attn_mask, 
-                        skip_toks = self.skip_toks)
+                        attn_mask = attn_mask,)
             )
         x = x + self.drop_path(
                     self.mlp(self.norm2(x))
@@ -85,7 +81,6 @@ class ConvBlock(nn.Module):
                 kernel_size = 8,
                 res_skip = False,
                 max_pool = None,
-                skip_toks=0,
         ):
         super().__init__()
 
@@ -116,15 +111,10 @@ class ConvBlock(nn.Module):
                                        padding = kernel_size//2,
                                        groups = channels_in if depth_wise else 1)
         self.max_pool = max_pool
-        self.skip_toks = skip_toks
-        if self.skip_toks > 0:
-            self.sink_proj = nn.Linear(channels_in, channels)
 
 
     def forward(self, x):
         r = 0
-        if self.skip_toks > 0:
-            t, x = x[...,:self.skip_toks], x[...,self.skip_toks:]
         if self.use_residual:
             r = self.conv_proj(x)
         x = self.cv_block(x)
@@ -135,8 +125,6 @@ class ConvBlock(nn.Module):
         if not isinstance(r, int):
             r = r[...,:x.size(dim=2)]
         x = r + x
-        if self.skip_toks > 0:
-            x = torch.concat((self.sink_proj(t.transpose(1,2)).transpose(1,2),x), dim=2)
         return x
 
 
@@ -158,11 +146,9 @@ class DFNet(nn.Module):
                        conv_dropout_p = 0.,
                        mhsa_kwargs = {},
                        trans_depths = 0,
-                       trans_drop_path = 0.,
                        conv_skip = False,
                        use_gelu = False,
                        stem_downproj = 1.,
-                       sink_tokens = 0,
                        flatten_feats = True,
                     **kwargs):
         super(DFNet, self).__init__()
@@ -222,9 +208,6 @@ class DFNet(nn.Module):
         # number of transformer blocks per stage
         self.trans_depths = trans_depths if isinstance(trans_depths, (list, tuple)) else [trans_depths]*(stage_count-1)
 
-        # "global" tokens exclusively used by transformer blocks 
-        self.sink_tokens = sink_tokens
-
         # construct the model using the selected params
         self.__build_model()
 
@@ -238,11 +221,6 @@ class DFNet(nn.Module):
                                      padding = self.pool_size // 2)
         # dropout applied to the output of each stage
         self.stage_dropout = nn.Dropout(p = self.block_dropout_p)
-
-        # initialization of sink tokens (if enabled)
-        if self.sink_tokens > 0:
-            toks = nn.init.xavier_uniform_(torch.empty(self.filter_nums[0], self.sink_tokens))
-            self.sinks = nn.Parameter(toks)
 
         # blocks for each stage of the classifier
         # begin with initial conv. block
@@ -279,7 +257,6 @@ class DFNet(nn.Module):
                                             kernel_size = self.kernel_size,
                                             res_skip = self.conv_skip,
                                             max_pool = self.max_pool,
-                                            skip_toks = self.sink_tokens,
                                         )
                 block_list = [conv_block]
 
@@ -289,7 +266,6 @@ class DFNet(nn.Module):
                     stage_mixer = self.mixers[i - 1]
                     stage_block = partial(TransformerBlock, dim = cur_dim, 
                                                 token_mixer = stage_mixer, 
-                                                skip_toks = self.sink_tokens,
                                          )
                     block_list = [stage_block() for _ in range(depth)] + block_list
 
@@ -298,28 +274,13 @@ class DFNet(nn.Module):
                 self.blocks.append(block)
 
         # calculate total feature size after flattening
-        self.fc_in_features = (self.sink_tokens + self.fmap_size) * self.filter_nums[-1] if self.flatten_feats else self.filter_nums[-1]
-
-        # build classification layers
-        #self.fc_size = self.mlp_hidden_dim
-        #self.fc = nn.Sequential(
-        #    nn.Linear(self.fc_in_features, self.fc_size),
-        #    nn.BatchNorm1d(self.fc_size),
-        #    nn.GELU() if self.use_gelu else nn.ReLU(),
-        #    nn.Dropout(self.mlp_dropout_p[0]),
-        #    nn.Linear(self.fc_size, self.fc_size),
-        #    nn.BatchNorm1d(self.fc_size),
-        #    nn.GELU() if self.use_gelu else nn.ReLU(),
-        #    nn.Dropout(self.mlp_dropout_p[1])
-        #)
-        #self.fc_out_fcount = self.fc_size
+        self.fc_in_features = self.fmap_size * self.filter_nums[-1] if self.flatten_feats else self.filter_nums[-1]
 
         self.pred = nn.Sequential(
             nn.Linear(self.fc_in_features, self.num_classes),
             # when using CrossEntropyLoss, already computed internally
             #nn.Softmax(dim=1) # dim = 1, don't softmax batch
         )
-
 
     def __stage_size(self, input_size):
         """Calculate the sequence size after stages within the model (as a function of input_size)
@@ -340,10 +301,6 @@ class DFNet(nn.Module):
 
         x = self.stage_dropout(x)
 
-        # if sink tokens are enabled, append now
-        if self.sink_tokens > 0:
-            x = torch.cat((self.sinks.unsqueeze(0).expand(x.shape[0],-1,-1), x), dim=2)
-
         # apply remaining stages
         for i,block in enumerate(self.blocks[1:]):
             # apply stage transformer blocks
@@ -352,9 +309,6 @@ class DFNet(nn.Module):
             # apply stage conv. block
             x = block[-1](x)
             x = self.stage_dropout(x)
-
-        #if self.sink_tokens > 0:
-        #    x = x[:,:,self.sink_tokens:]
 
         return x
 
@@ -367,7 +321,6 @@ class DFNet(nn.Module):
         - run input through feature layers
         - run feature output through classification layers
         """
-
         # add channel dim if necessary
         if len(x.shape) < 3:
             x = x.unsqueeze(1)
@@ -396,10 +349,8 @@ class DFNet(nn.Module):
             x = x.flatten(start_dim=1) # dim = 1, don't flatten batch
         else:
             x = torch.mean(x, 2).flatten(start_dim=1)
-        #g = self.fc(x)
 
         # produce final predictions from mlp
-        y_pred = self.pred(x)
-        return y_pred
+        return self.pred(x)
 
 

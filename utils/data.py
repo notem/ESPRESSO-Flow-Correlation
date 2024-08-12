@@ -49,7 +49,10 @@ class BaseDataset(data.Dataset):
         times_processor = DataProcessor(('times',))
 
         # loop through the samples within each class
-        for ID,sample_tuple in tqdm(enumerate(samples)):
+        for ID,sample_tuple in tqdm(enumerate(samples), 
+                                    total=len(samples), 
+                                    dynamic_ncols=True, 
+                                    desc="Preparing dataset..."):
 
             self.IDs.append(ID)
             self.data[ID] = []
@@ -78,8 +81,6 @@ class BaseDataset(data.Dataset):
                     if not preproc_feats:  # apply processing if not yet performed
                         sample = data_processor(sample)
                     self.data[ID].append([sample])
-
-
 
     def __len__(self):
         """
@@ -170,12 +171,13 @@ class TripletDataset(BaseDataset):
         # offline triplet (semi)hard mining
         if fens is not None:
             # use fen to create embeddings for all samples in the dataset
-            with tqdm(total=len(self.IDs)+len(self.IDs)**2) as pbar:
+            with tqdm(total=len(self.IDs)*2+len(self.IDs),
+                      dynamic_ncols=True) as pbar:
 
                 pbar.set_description('Generating embeddings...')
-                embed_dict = dict()
+                inflow_embeds = []
+                outflow_embeds = []
                 for ID in self.IDs:
-                    embed_dict[ID] = []
                     samples = self.data[ID]
                     for i,sample in enumerate(samples):
                         if i % 2 == 0:   # inflow sample
@@ -188,36 +190,68 @@ class TripletDataset(BaseDataset):
                         sample = sample.permute(0,2,1).to(fen.get_device())
                         # hopefully your GPU memory is adequate to fit all windows into memory...
                         window_embeds = fen(sample).detach().cpu()
-                        embed_dict[ID].append(window_embeds)
+                        if i % 2 == 0:
+                            inflow_embeds.append(window_embeds)
+                        else:
+                            outflow_embeds.append(window_embeds)
                         pbar.update(1)
+
+                pbar.set_description(f'Calculating similarity matrix...')
+                inflow_embeds = torch.stack(inflow_embeds, dim=0)
+                outflow_embeds = torch.stack(outflow_embeds, dim=0)
+
+                # normalize embedding dim
+                inflow_embeds = inflow_embeds / torch.norm(inflow_embeds, p=2, dim=-1, keepdim=True)
+                outflow_embeds = outflow_embeds / torch.norm(outflow_embeds, p=2, dim=-1, keepdim=True)
+
+                # calculate pairwise similarities
+                if len(inflow_embeds.size()) == 3:
+                    # permute axis and dot-product across batch and embed dim
+                    all_sim = torch.matmul(inflow_embeds.permute(1,0,2),
+                                           outflow_embeds.permute(1,2,0))
+                    all_sim = all_sim.permute(1,2,0) # (N,sim,windows)
+
+                elif len(inflow_embeds.size()) == 4:
+                    # espresso-style networks will have extra window dimension to handle
+                    all_sim = torch.matmul(inflow_embeds.permute(1,2,0,3),
+                                           outflow_embeds.permute(1,2,3,0))
+                    all_sim = all_sim.permute(2,3,0,1)  # (N,sim,1,windows)
 
                 mode = 'hard' if margin <= 0 else 'semi-hard'
                 pbar.set_description(f'Finding {mode} triplets...')
-                # calculate similarities and identify (semi)hard triplets
+                # identify (semi)hard triplets
+                # select one random negative for every (anc,pos) pair
                 for i,ID in enumerate(self.IDs):
-                    a_embeds = embed_dict[ID][0]
-                    p_embeds = embed_dict[ID][1]
+                    for window_idx in range(all_sim.size(2)):
+                        pos_anc_tuple = (ID, window_idx)
 
-                    for window_idx in range(a_embeds.size(0)):
-                        pos_sim = F.cosine_similarity(a_embeds[window_idx], 
-                                                      p_embeds[window_idx], dim=0).amin()
-                        for j,neg_ID in enumerate(self.IDs):
-                            if i == j: continue
-                            n_embeds = embed_dict[neg_ID][1]
-                            for window_jdx in range(n_embeds.size(0)):
-                                neg_sim = F.cosine_similarity(a_embeds[window_idx], 
-                                                              n_embeds[window_jdx], dim=0).amax()
-                                triplet_tuple = ((ID, window_idx), (ID, window_idx), (neg_ID, window_jdx))
-
-                                # semi-hard mining, where sim(a,n) + margin > sim(a,p) > sim(a,n)
-                                if margin > 0 and neg_sim + margin > pos_sim and neg_sim < pos_sim:
-                                    self.triplets.append(triplet_tuple)
-
-                                # hard mining
-                                elif neg_sim > pos_sim:
-                                    self.triplets.append(triplet_tuple)
-
-                    pbar.update(len(self.IDs))
+                        # current window positive sim
+                        pos_sim = all_sim[i,i,window_idx]
+                        if len(inflow_embeds.size()) == 4:    
+                            # if using espresso-style network, extra dim needs to be reduced
+                            pos_sim = np.amin(pos_sim)  # hardest positive sim
+                            
+                        neg_sims = all_sim[i]
+                        if len(inflow_embeds.size()) == 4:
+                            neg_sims = np.amax(neg_sims, dim=-1)
+                            
+                        if margin > 0: # semi-hard mining
+                            valid_neg_idx = torch.where((neg_sims + margin > pos_sim) & 
+                                                        (neg_sims < pos_sim))
+                        else:  # hard mining
+                            valid_neg_idx = torch.where(neg_sims > pos_sim)
+                            
+                        if len(valid_neg_idx[0]) > 0:
+                            # select random idx
+                            j = np.random.randint(0, len(valid_neg_idx[0]))
+                            
+                            # build negative identifier tuple
+                            neg_tuple = (valid_neg_idx[0].numpy(force=True)[j], 
+                                         valid_neg_idx[1].numpy(force=True)[j])
+                            
+                            # add triplet
+                            self.triplets.append((pos_anc_tuple, pos_anc_tuple, neg_tuple))
+                    pbar.update(1)
 
         if len(self.triplets) > 0:
             if max_triplets is not None:
@@ -226,7 +260,8 @@ class TripletDataset(BaseDataset):
         # no candidate triplets? randomly sample triplets
 
         # setup random window triplet with no mining
-        with tqdm(total=len(self.IDs)**2) as pbar:
+        with tqdm(total=len(self.IDs)**2, 
+                  dynamic_ncols=True) as pbar:
             pbar.set_description(f'Generating random triplets...')
             for index in range(len(self.IDs)):
                 ID = self.IDs[index]    # chain ID for anchor & positive
@@ -429,7 +464,7 @@ if __name__ == "__main__":
     #                 'window_count': 11, 
     #                 'window_overlap': 2
     #                 }
-    window_kwargs = None   # disable windowing
+    window_kwargs = None   # disable windowing (e.g., create one window with all features)
 
     # multi-channel feature processor
     processor = DataProcessor(('sizes', 'iats', 'time_dirs', 'dirs'))
@@ -455,9 +490,3 @@ if __name__ == "__main__":
         for anc, pos, neg in tqdm(triplets, desc="Looping over triplets..."):
             pass
         triplets.generate_triplets()  # resample partition split after each full loop over dataset!
-
-
-        pairwise = PairwiseDataset(data)
-        print(f'Pairwise: {len(pairwise)}')
-        for sample1, sample2, correlated in tqdm(pairwise, desc="Looping over pairs..."):
-            pass

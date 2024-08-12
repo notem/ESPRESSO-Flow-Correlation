@@ -1,0 +1,13 @@
+{
+    "model": "DCF",
+    "feature_dim": 64,
+    "features": [
+        "dcf"
+    ],
+    "window_kwargs": {
+        "window_count": 11,
+        "window_width": 5,
+        "window_overlap": 3,
+        "include_all_window": false
+    }
+}

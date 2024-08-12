@@ -1,31 +1,16 @@
 import torch
-import torch.nn as nn
-import torch.optim as optim
-import torch.nn.functional as F
-from torch import Tensor
 import numpy as np
-import math
 import os
-from os.path import join
-import pickle as pkl
 from tqdm import tqdm
-from torchvision import transforms, utils
-import transformers
-import scipy
 import json
-import time
 import argparse
-from torch.utils.data import DataLoader
-from sklearn.metrics.pairwise import pairwise_distances
 import pickle
 
 from utils.nets.espressonet import EspressoNet
 from utils.nets.dcfnet import Conv1DModel
-from utils.layers import Mlp
+from utils.nets.transdfnet import DFNet
 from utils.data import BaseDataset, load_dataset
 from utils.processor import DataProcessor
-
-
 
 
 # enable if NaN or other odd behavior appears
@@ -39,11 +24,11 @@ torch.autograd.profiler.emit_nvtx(False)
 torch.backends.cudnn.benchmark = True
 
 
-
 def parse_args():
     parser = argparse.ArgumentParser(
-                        #prog = 'WF Benchmark',
-                        #description = 'Train & evaluate WF attack model.',
+                        prog = 'calc-sims.py',
+                        description = 'Generate the similarity matrix for the validation \
+                                        & testing datasets using a trained FEN.',
                         #epilog = 'Text at the bottom of help'
                         )
 
@@ -88,6 +73,7 @@ if __name__ == "__main__":
         resumed = torch.load(checkpoint_path)
         checkpoint_fname = os.path.basename(os.path.dirname(checkpoint_path))
     else:
+        import sys
         print("Failed to load model checkpoint!")
         sys.exit(-1)
     # else: checkpoint path and fname will be defined later if missing
@@ -106,6 +92,10 @@ if __name__ == "__main__":
         inflow_fen = Conv1DModel(input_channels=len(features),
                                  input_size = 500,
                                  **model_config)
+    elif model_name.lower() == 'laserbeak':
+        inflow_fen = DFNet(input_channels=len(features),
+                                 input_size = 500,
+                                 **model_config)
     inflow_fen = inflow_fen.to(device)
     inflow_fen.load_state_dict(resumed['inflow_fen'])
     inflow_fen.eval()
@@ -119,6 +109,10 @@ if __name__ == "__main__":
                                     **model_config)
         elif model_config['model'].lower() == 'dcf':
             outflow_fen = Conv1DModel(input_channels=len(features),
+                                    input_size = 800,
+                                     **model_config)
+        elif model_config['model'].lower() == 'laserbeak':
+            outflow_fen = DFNet(input_channels=len(features),
                                     input_size = 800,
                                      **model_config)
         outflow_fen = outflow_fen.to(device)
@@ -170,7 +164,7 @@ if __name__ == "__main__":
         # Generate window embeddings for all samples
         inflow_embeds = []
         outflow_embeds = []
-        for ID in tqdm(data.IDs):#, description="Generating embeds..."):
+        for ID in tqdm(data.IDs, desc="Generating embeddings..."):
             # inflow 
             windows = data.data[ID][0]
             embeds = in_fen(proc(windows)).squeeze().detach().cpu()
@@ -189,20 +183,18 @@ if __name__ == "__main__":
         """
         """
         # Build window similarity & correlation matrices
-        window_count = len(inflow_embeds[0])
-        all_sims = np.zeros((len(inflow_embeds), len(outflow_embeds), window_count))
-        with tqdm(total=len(inflow_embeds)*len(outflow_embeds)) as pbar:
-            pbar.set_description("Building similarities matrix...")
-            for i in range(len(inflow_embeds)):
-                for j in range(len(outflow_embeds)):
-                    flow1 = inflow_embeds[i]
-                    flow2 = outflow_embeds[j]
+        inflow_embeds = torch.stack(inflow_embeds, dim=0)
+        outflow_embeds = torch.stack(outflow_embeds, dim=0)
 
-                    window_sims = F.cosine_similarity(flow1, flow2, dim=1)
-                    window_sims = window_sims.flatten().numpy(force=True)
+        # normalize embedding dimension by vector norm
+        inflow_embeds = inflow_embeds / torch.norm(inflow_embeds, p=2, dim=-1, keepdim=True)
+        outflow_embeds = outflow_embeds / torch.norm(outflow_embeds, p=2, dim=-1, keepdim=True)
 
-                    all_sims[i,j] = window_sims
-                    pbar.update(1)
+        # smash together matrices as dot-product to produce the cosine similarity of sampleXwindows
+        all_sims = torch.matmul(inflow_embeds.permute(1,0,2),
+                               outflow_embeds.permute(1,2,0))
+        all_sims = all_sims.permute(1,2,0).numpy(force=True)
+        
         return all_sims
 
     print("=> Calculating sims...")

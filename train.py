@@ -20,6 +20,7 @@ from torch.optim.lr_scheduler import StepLR
 
 from utils.nets.espressonet import EspressoNet
 from utils.nets.dcfnet import Conv1DModel
+from utils.nets.transdfnet import DFNet
 from utils.processor import DataProcessor
 from utils.data import *
 from utils.loss import *
@@ -40,25 +41,25 @@ torch.backends.cudnn.benchmark = True
 
 def parse_args():
     parser = argparse.ArgumentParser(
-                        #prog = 'WF Benchmark',
-                        #description = 'Train & evaluate WF attack model.',
+                        prog = 'train.py',
+                        description = 'Train a feature extraction network (FEN) for flow correlation.',
                         #epilog = 'Text at the bottom of help'
                         )
 
     # experiment configuration options
     parser.add_argument('--data_dir', 
-                        default = '/data/path2', 
+                        default = './data/undefended', 
                         type = str,
                         help = "Path to dataset root 'pathx' directory.", 
                         required=True)
     parser.add_argument('--ckpt_dir',
-                        default = './checkpoint',
+                        default = './exps/ckpts',
                         type = str,
                         help = "Set directory for model checkpoints.")
-    parser.add_argument('--results_dir', 
-                        default = './results',
+    parser.add_argument('--log_dir', 
+                        default = './exps/logs',
                         type = str,
-                        help = "Set directory for result logs.")
+                        help = "Set directory to store the training history log.")
     parser.add_argument('--ckpt', 
                         default = None, 
                         type = str,
@@ -80,24 +81,30 @@ def parse_args():
     parser.add_argument('--features', 
                         default=None, type=str, nargs="+",
                         help='Overwrite the features used in the config file. Multiple features can be provided.')
-    parser.add_argument('--batch_size', 
+    parser.add_argument('--bs', 
                         default=64, type=int,
                         help='Size of batches.')
+    parser.add_argument('--epochs', 
+                        default=10000, type=int,
+                        help='Number of epochs for training.')
     parser.add_argument('--online', 
                         default=False, action='store_true',
-                        help='Use online batch hard mining strategy.')
+                        help='Use online batch mining strategy.')
     parser.add_argument('--hard', 
                         default=False, action='store_true', 
-                        help='Use hard mining loss (when implemented)')
+                        help='Use hard negative mining during training epochs.')
     parser.add_argument('--loss_margin', 
                         default=0.1, type=float, 
-                        help='The margin to use for triplet loss')
+                        help='The margin to use for triplet loss and semi-hard mining.')
     parser.add_argument('--single_fen', 
                         default=False, action='store_true',
                         help='Use the same FEN for in and out flows.')
     parser.add_argument('--dcf', 
                         default=False, action='store_true',
-                        help='Use the DeepCoFFEA model and windowing strategy.')
+                        help='Use the original DeepCoFFEA model and windowing strategy.')
+    parser.add_argument('--decay_step',
+                        default = 100,
+                        help='Learning rate is decayed after this number of epochs.')
 
     return parser.parse_args()
 
@@ -120,25 +127,23 @@ if __name__ == "__main__":
     # else: checkpoint path and fname will be defined later if missing
 
     checkpoint_dir = args.ckpt_dir
-    results_dir = args.results_dir
+    log_dir = args.log_dir
 
     # # # # # #
     # finetune config
     # # # # # #
-    mini_batch_size = args.batch_size   # samples to fit on GPU
-    batch_size = args.batch_size        # when to update model
-    accum = batch_size // mini_batch_size
-    # # # # # #
-    warmup_period   = 10
-    ckpt_period     = 10
-    epochs          = 10000
+    batch_size      = args.bs
+    ckpt_period     = 50
+    epochs          = args.epochs
+    save_best_epoch = True
     opt_lr          = 1e-3
     opt_betas       = (0.9, 0.999)
     opt_wd          = 0.001
-    steplr_step_size = 100000
-    save_best_epoch = True
-    loss_margin = args.loss_margin
-    use_same_fen = args.single_fen
+    steplr_step     = args.decay_step
+    steplr_gamma    = 0.25
+    loss_margin     = args.loss_margin
+    use_same_fen    = args.single_fen
+    # # # # # #
 
     # all trainable network parameters
     params = []
@@ -166,7 +171,7 @@ if __name__ == "__main__":
     else:
         model_config = {
                 'model': "Espresso",
-                'input_size': 1600,
+                'input_size': 1200,
                 'feature_dim': 64,
                 'hidden_dim': 96,
                 'depth': 8,
@@ -176,8 +181,7 @@ if __name__ == "__main__":
                     'padding': 0,
                     },
                 'output_conv_kwargs': {
-                    'kernel_size': 60,
-                    #'stride': 40,
+                    'kernel_size': 50,
                     'stride': 3,
                     'padding': 0,
                     },
@@ -204,16 +208,14 @@ if __name__ == "__main__":
                     ],
                 "window_kwargs": None,
             }
+        
     model_name = model_config['model']
-
     if args.input_size is not None:
         model_config['input_size'] = args.input_size
     if args.features is not None:
         model_config['features'] = args.features
     features = model_config['features']
-
     feature_dim = model_config['feature_dim']
-
     model_arch = model_config['model']
 
     print("==> Model configuration:")
@@ -225,6 +227,10 @@ if __name__ == "__main__":
                                 **model_config)
     elif model_arch.lower() == "dcf":
         inflow_fen = Conv1DModel(input_channels=len(features),
+                                input_size = 500,
+                                **model_config)
+    elif model_arch.lower() == "laserbeak":
+        inflow_fen = DFNet(input_channels=len(features),
                                 input_size = 500,
                                 **model_config)
     else:
@@ -245,6 +251,10 @@ if __name__ == "__main__":
             outflow_fen = EspressoNet(input_channels=len(features),
                                     **model_config)
         elif model_arch.lower() == "dcf":
+            outflow_fen = Conv1DModel(input_channels=len(features),
+                                    input_size = 800,
+                                    **model_config)
+        elif model_arch.lower() == "laserbeak":
             outflow_fen = Conv1DModel(input_channels=len(features),
                                     input_size = 800,
                                     **model_config)
@@ -269,17 +279,13 @@ if __name__ == "__main__":
     # multi-channel feature processor
     processor = DataProcessor(features)
 
+    # dataset split indices
     tr_idx = np.arange(0, 9000)
     va_idx = np.arange(9000, 10000)
-    te_idx = np.arange(10000,15000)
-
-    #te_idx = np.arange(0,100)
-    #va_idx = np.arange(100, 200)
-    #tr_idx = np.arange(200, 400)
+    te_idx = np.arange(10000,11000)
 
     # stream window definitions
     window_kwargs = model_config['window_kwargs']
-
 
     def make_dataloader(idx):
         """
@@ -295,12 +301,10 @@ if __name__ == "__main__":
         # construct a triplets dataset object, derived from the base dataset object
         if args.online:  # build a dataset compatible for online mining
             dataset = OnlineDataset(data)
-            b_size = mini_batch_size
         else:            # build a dataset for random triplet generation
             dataset = TripletDataset(data)
-            b_size = mini_batch_size
         loader = DataLoader(dataset,
-                            batch_size = b_size, 
+                            batch_size = batch_size, 
                             collate_fn = dataset.batchify,
                             shuffle = True)
         return dataset, loader
@@ -327,15 +331,12 @@ if __name__ == "__main__":
     if resumed and resumed['epoch']:    # if resuming from a finetuning checkpoint
         last_epoch = resumed['epoch']
 
-    #scheduler = transformers.get_cosine_with_hard_restarts_schedule_with_warmup(optimizer, 
-    #                                                            num_warmup_steps = warmup_period * len(trainloader), 
-    #                                                            num_training_steps = epochs * len(trainloader), 
-    #                                                            num_cycles = epochs // ckpt_period,
-    #                                                            #last_epoch = last_epoch * len(trainloader) if last_epoch
-    #                                                            )
+    # StepLR scheduler for learning rate decay
     scheduler = StepLR(optimizer, 
-                        step_size = steplr_step_size, 
-                        gamma = 0.1)
+                        step_size = steplr_step, 
+                        gamma = steplr_gamma,
+                        last_epoch = last_epoch
+                    )
 
     # define checkpoint fname if not provided
     if not checkpoint_fname:
@@ -344,15 +345,9 @@ if __name__ == "__main__":
 
     # create checkpoint directory if necesary
     if not os.path.exists(f'{checkpoint_dir}/{checkpoint_fname}/'):
-        try:
-            os.makedirs(f'{checkpoint_dir}/{checkpoint_fname}/')
-        except:
-            pass
-    if not os.path.exists(results_dir):
-        try:
-            os.makedirs(results_dir)
-        except:
-            pass
+        os.makedirs(f'{checkpoint_dir}/{checkpoint_fname}/')
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
 
 
     if args.online:
@@ -408,23 +403,22 @@ if __name__ == "__main__":
                     n += len(inputs_anc)
 
                 if not eval_only:
-                    loss /= accum   # normalize to full batch size before computing gradients
                     loss.backward()
-
-                    # update weights, update scheduler, and reset optimizer after a full batch is completed
-                    if (batch_idx+1) % accum == 0 or batch_idx+1 == len(dataloader):
-                        optimizer.step()
-                        scheduler.step()
-                        for param in params:
-                            param.grad = None
+                    optimizer.step()
+                    for param in params:
+                        param.grad = None
 
                 tot_loss += loss.item()
-
+                
                 pbar.update(1)
                 pbar.set_postfix({
                                   'triplet': tot_loss/(batch_idx+1),
                                   })
-                pbar.set_description(desc)
+                
+                last_lr = scheduler.get_last_lr()
+                if last_lr and not eval_only:
+                    mod_desc = desc + f' | lr={last_lr[0]}'
+                pbar.set_description(mod_desc)
 
         tot_loss /= batch_idx + 1
         return tot_loss
@@ -440,6 +434,7 @@ if __name__ == "__main__":
             outflow_fen.train()
             train_loss = epoch_iter(trainloader, 
                                     desc = f"Epoch {epoch} Train")
+            scheduler.step()
             metrics = {'tr_loss': train_loss}
 
             # evaluate on hold-out data
@@ -487,16 +482,15 @@ if __name__ == "__main__":
 
             if not args.online:  # generate new triplets
                 tr_data.generate_triplets(fens = (inflow_fen, outflow_fen), 
-                                          margin = loss_margin if not args.hard else 0.,
-                                          max_triplets = 100000)
+                                          margin = loss_margin if not args.hard else 0.)
 
     except KeyboardInterrupt:
         pass
 
     finally:
-        if not os.path.exists(results_dir):
-            os.makedirs(results_dir)
-        results_fp = f'{results_dir}/{checkpoint_fname}.txt'
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir)
+        results_fp = f'{log_dir}/{checkpoint_fname}.txt'
         with open(results_fp, 'w') as fi:
             json.dump(history, fi, indent='\t')
 

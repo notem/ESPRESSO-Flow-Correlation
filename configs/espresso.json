@@ -1,0 +1,39 @@
+{
+    "model": "Espresso",
+    "input_size": 1200,
+    "feature_dim": 64,
+    "hidden_dim": 96,
+    "depth": 8,
+    "input_conv_kwargs": {
+        "kernel_size": 3,
+        "stride": 3,
+        "padding": 0
+    },
+    "output_conv_kwargs": {
+        "kernel_size": 50,
+        "stride": 3,
+        "padding": 0
+    },
+    "mixer_kwargs": {
+        "type": "mhsa",
+        "head_dim": 16,
+        "use_conv_proj": true,
+        "kernel_size": 3,
+        "stride": 2,
+        "feedforward_style": "mlp",
+        "feedforward_ratio": 4,
+        "feedforward_drop": 0.0
+    },
+    "features": [
+        "interval_dirs_up",
+        "interval_dirs_down",
+        "interval_dirs_sum",
+        "interval_dirs_sub",
+        "interval_size_up",
+        "interval_size_down",
+        "interval_size_sum",
+        "interval_size_sub",
+        "interval_cumul_norm"
+    ],
+    "window_kwargs": null
+}

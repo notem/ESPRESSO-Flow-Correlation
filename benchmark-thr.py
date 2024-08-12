@@ -1,9 +1,5 @@
 import torch
 from torch.utils.data import Dataset, DataLoader
-from torch.utils.data.dataset import random_split
-from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import confusion_matrix
 import numpy as np
 import math
 import torch.nn as nn
@@ -17,30 +13,12 @@ import os
 import pickle
 
 
-def build_inv_sort_matrix(sims):
+def calc_votes_thr(sims, sorted_sims, k=1):
     """
     """
-    sorted_idx = np.argsort(sims, axis=1)       # sort by sim
-    sorted_idx = np.flip(sorted_idx, axis=1)    # reverse order to descending
+    local_thr = sorted_sims[:,k,:]
+    return (sims >= local_thr).astype(int)
 
-    inverse_sorted_idx = np.argsort(sorted_idx, axis=1)
-
-    # sanity check!
-    sorted_sims = np.take_along_axis(sims, sorted_idx, axis=1)
-    unsorted_sims = np.take_along_axis(sorted_sims, inverse_sorted_idx, axis=1)
-    assert(np.allclose(sims, unsorted_sims))
-
-    return inverse_sorted_idx
-
-
-def calc_votes(dims, inverse_sorted_idx, k=1):
-    """
-    """
-    dims_corr = (dims[0], k, dims[2])
-    dims_uncorr = (dims[0], dims[1]-k, dims[2])
-    votes = np.concatenate((np.ones(dims_corr), np.zeros(dims_uncorr)), axis=1)
-    votes = np.take_along_axis(votes, inverse_sorted_idx, axis=1)
-    return votes
 
 def tally_votes(votes, perc=0.8):
     """
@@ -78,21 +56,30 @@ def filter_votes(sims, votes, min_sim):
 
 
 def evaluate(sims, 
-        ks = (1,4,8,16,32,64,128,256,512,1024), 
+        ks = (1,2,4,8,16,32,64,128,256,512), 
         min_sim = None,
         vote_thr = 0.8,
         ):
     """
     """
-    fpr, tpr = [], []
-
-    # construct idx for revsere sorting votes & ground truth mat
-    inv_sort_idx = build_inv_sort_matrix(sims)
+    fpr, tpr, perf_metrics = [], [], []
+    
+    # correlated when i=j
     corr_true = np.eye(sims.shape[0], sims.shape[1])
 
+    # sort the sims (for local thresholding)
+    sorted_idx = np.argsort(sims, axis=1)
+    sorted_idx = np.flip(sorted_idx, axis=1)
+    sorted_sims = np.take_along_axis(sims, sorted_idx, axis=1)
+    
+    # last k=max so as to have a complete curve
+    ks += (sims.shape[0]-1,)
+    
+    # evaluate window sims at various levels of k
     for k in tqdm(ks):
+        
         # using k, construct the matrix of corr votes
-        votes = calc_votes(sims.shape, inv_sort_idx, k=k)
+        votes = calc_votes_thr(sims, sorted_sims, k)
         # filter out votes below min (if supplied)
         if min_sim is not None:
             votes = filter_votes(sims, votes, min_sim)
@@ -103,10 +90,13 @@ def evaluate(sims,
 
         fpr.append((fp / (fp + tn)) if fp+tn > 0 else 0.)
         tpr.append((tp / (tp + fn)) if tp+fn > 0 else 0.)
+        perf_metrics.append((tp, tn, fp, fn))
 
-    return fpr, tpr
-
-
+    idx = np.argsort(fpr)
+    fpr = np.array(fpr)[idx]
+    tpr = np.array(tpr)[idx]
+    perf_metrics = np.array(perf_metrics)[idx]
+    return fpr, tpr, perf_metrics
 
 
 def parse_args():
@@ -159,8 +149,10 @@ if __name__ == "__main__":
 
     # evaluate performance on test set
     te_sims = data['te_sims']
-    fpr, tpr = evaluate(te_sims, min_sim = min_sim)
+    fpr, tpr, perf_metrics = evaluate(te_sims, min_sim = min_sim)
+    acc = (perf_metrics[0][0] + perf_metrics[0][1]) / sum(perf_metrics[0])
     roc_auc = metrics.auc(fpr, tpr)
+    print(f"Test accuracy: {acc}, roc: {roc_auc}")
 
     # store results
     with open(args.results_file, 'wb') as fi:
@@ -172,8 +164,8 @@ if __name__ == "__main__":
     plt.title(f'Receiver Operating Characteristic')
     plt.plot(fpr, tpr, 'b', label = 'AUC = %0.6f' % roc_auc)
     plt.legend(loc = 'lower right')
-    #plt.plot([0, 1], [0, 1],'r--')
-    plt.xlim([0.000001, .1])
+    plt.plot([0, 1], [0, 1],'--')
+    plt.xlim([1e-8, 1e-1])
     plt.ylim([0, 1])
     plt.ylabel('True Positive Rate')
     plt.xlabel('False Positive Rate')
