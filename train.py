@@ -135,7 +135,7 @@ if __name__ == "__main__":
     opt_lr          = 1e-3
     opt_betas       = (0.9, 0.999)
     opt_wd          = 0.001
-    steplr_step_size = 5000
+    steplr_step_size = 100000
     save_best_epoch = True
     loss_margin = args.loss_margin
     use_same_fen = args.single_fen
@@ -334,7 +334,7 @@ if __name__ == "__main__":
     #                                                            #last_epoch = last_epoch * len(trainloader) if last_epoch
     #                                                            )
     scheduler = StepLR(optimizer, 
-                        step_size = stepl_step_size, 
+                        step_size = steplr_step_size, 
                         gamma = 0.1)
 
     # define checkpoint fname if not provided
@@ -487,7 +487,8 @@ if __name__ == "__main__":
 
             if not args.online:  # generate new triplets
                 tr_data.generate_triplets(fens = (inflow_fen, outflow_fen), 
-                                          margin = loss_margin if not args.hard else 0.)
+                                          margin = loss_margin if not args.hard else 0.,
+                                          max_triplets = 100000)
 
     except KeyboardInterrupt:
         pass

@@ -106,7 +106,7 @@ class TripletDataset(BaseDataset):
         vars(self).update(vars(dataset))  # load dataset attributes
 
         # create and shuffle indices for samples
-        self.generate_triplets()
+        self.generate_triplets(max_triplets=len(dataset))
 
     def __len__(self):
         """
@@ -157,7 +157,12 @@ class TripletDataset(BaseDataset):
 
         return anc[anc_window_idx], pos[anc_window_idx], neg[neg_window_idx]
 
-    def generate_triplets(self, fens=None, margin=0):
+    def _trim_triplets(self, count):
+        random.shuffle(self.triplets)
+        if len(self.triplets) > count:
+            self.triplets = self.triplets[:count]
+
+    def generate_triplets(self, fens=None, margin=0, max_triplets=None):
         """
         """
         self.triplets = []
@@ -215,6 +220,8 @@ class TripletDataset(BaseDataset):
                     pbar.update(len(self.IDs))
 
         if len(self.triplets) > 0:
+            if max_triplets is not None:
+                self._trim_triplets(max_triplets)
             return
         # no candidate triplets? randomly sample triplets
 
@@ -228,6 +235,8 @@ class TripletDataset(BaseDataset):
                         neg_ID = self.IDs[tmp_idx]
                         self.triplets.append(((ID, -1), (ID, -1), (neg_ID, -1)))
                     pbar.update(1)
+        if max_triplets is not None:
+            self._trim_triplets(max_triplets)
 
     @staticmethod
     def batchify(batch):

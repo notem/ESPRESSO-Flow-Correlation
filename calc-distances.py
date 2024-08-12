@@ -17,10 +17,12 @@ import time
 import argparse
 from torch.utils.data import DataLoader
 from sklearn.metrics.pairwise import pairwise_distances
+import pickle
 
 from utils.nets.espressonet import EspressoNet
+from utils.nets.dcfnet import Conv1DModel
 from utils.layers import Mlp
-from utils.data import BaseDataset, PairwiseDataset, load_dataset
+from utils.data import BaseDataset, load_dataset
 from utils.processor import DataProcessor
 
 
@@ -72,8 +74,9 @@ if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     args = parse_args()
+    use_same_fen = False
 
-    dists_dir = os.path.basename(args.dists_file)
+    dists_dir = os.path.dirname(args.dists_file)
     if not os.path.exists(dists_dir):
         os.makedirs(dists_dir)
 
@@ -89,16 +92,20 @@ if __name__ == "__main__":
         sys.exit(-1)
     # else: checkpoint path and fname will be defined later if missing
 
-    model_name = "DF"
-
     model_config = resumed['config']
+    model_name = model_config['model']
     features = model_config['features']
     feature_dim = model_config['feature_dim']
     print(json.dumps(model_config, indent=4))
 
     # traffic feature extractor
-    inflow_fen = EspressoNet(input_channels=len(features),
-                            **model_config)
+    if model_name.lower() == "espresso":
+        inflow_fen = EspressoNet(input_channels=len(features),
+                                **model_config)
+    elif model_name.lower() == 'dcf':
+        inflow_fen = Conv1DModel(input_channels=len(features),
+                                 input_size = 500,
+                                 **model_config)
     inflow_fen = inflow_fen.to(device)
     inflow_fen.load_state_dict(resumed['inflow_fen'])
     inflow_fen.eval()
@@ -107,8 +114,13 @@ if __name__ == "__main__":
         outflow_fen = inflow_fen
 
     else:
-        outflow_fen = EspressoNet(input_channels=len(features),
-                                **model_config)
+        if model_config['model'].lower() == "espresso":
+            outflow_fen = EspressoNet(input_channels=len(features),
+                                    **model_config)
+        elif model_config['model'].lower() == 'dcf':
+            outflow_fen = Conv1DModel(input_channels=len(features),
+                                    input_size = 800,
+                                     **model_config)
         outflow_fen = outflow_fen.to(device)
         outflow_fen.load_state_dict(resumed['outflow_fen'])
         outflow_fen.eval()
@@ -119,15 +131,13 @@ if __name__ == "__main__":
     # multi-channel feature processor
     processor = DataProcessor(features)
 
-    te_idx = np.arange(0, 2000)
-    va_idx = np.arange(2000, 4000)
+    va_idx = np.arange(9000, 10000)
+    te_idx = np.arange(10000, 15000)
 
     # stream window definitions
     window_kwargs = model_config['window_kwargs']
 
-    def make_dataloader(idx, 
-            sample_mode='undersample', 
-            sample_ratio=None):
+    def make_dataloader(idx):
         """
         """
         # load data from files
@@ -137,23 +147,13 @@ if __name__ == "__main__":
         data = BaseDataset(samples, processor,
                               window_kwargs = window_kwargs,
                           )
-        #data = PairwiseDataset(data,
-        #                       sample_mode = sample_mode,
-        #                       sample_ratio = sample_ratio)
         return data
 
     print("Loading validation data...")
-    va_data = make_dataloader(va_idx, 
-                sample_mode = 'undersample', 
-                sample_ratio = 1)
-    va_ratio = len(va_data.uncorrelated_pairs) / len(va_data.correlated_pairs)
-    print(f'Tr. data ratio: {va_ratio}')
+    va_data = make_dataloader(va_idx)
 
     print("Loading testing data...")
-    te_data = make_dataloader(te_idx,
-                sample_ratio = None)
-    te_ratio = len(te_data.uncorrelated_pairs) / len(te_data.correlated_pairs)
-    print(f'Te. data ratio: {te_ratio}')
+    te_data = make_dataloader(te_idx)
 
     def proc(t):
         """Pad and set tensor device
@@ -170,45 +170,46 @@ if __name__ == "__main__":
         # Generate window embeddings for all samples
         inflow_embeds = []
         outflow_embeds = []
-        for IDs in data.sample_ID_map.values():
-
-            windows = data.windows[IDs['inflow']]
-            embeds = in_fen(proc(windows)).detach().cpu()
+        for ID in tqdm(data.IDs):#, description="Generating embeds..."):
+            # inflow 
+            windows = data.data[ID][0]
+            embeds = in_fen(proc(windows)).squeeze().detach().cpu()
             inflow_embeds.append(embeds)
-
-            windows = data.windows[IDs['outflow']]
-            embeds = out_fen(proc(windows)).detach().cpu()
+            # outflow
+            windows = data.data[ID][1]
+            embeds = out_fen(proc(windows)).squeeze().detach().cpu()
             outflow_embeds.append(embeds)
         return inflow_embeds, outflow_embeds
 
     print("=> Generating embeds...")
-    va_embeds, va_labels = gen_embeds(data, inflow_fen, outflow_fen, proc)
-    te_embeds, te_labels = gen_embeds(data, inflow_fen, outflow_fen, proc)
+    va_inflow_embeds, va_outflow_embeds = gen_embeds(va_data, inflow_fen, outflow_fen, proc)
+    te_inflow_embeds, te_outflow_embeds = gen_embeds(te_data, inflow_fen, outflow_fen, proc)
 
     def build_sims(inflow_embeds, outflow_embeds):
         """
         """
         # Build window similarity & correlation matrices
         window_count = len(inflow_embeds[0])
-        all_sims = np.zeros((len(inflow_embeds), len(outflow_embeds), len(window_count)))
-        for i in range(len(inflow_embeds)):
-            for j in range(len(outflow_embeds)):
-                flow1 = inflow_embeds[i]
-                flow2 = outflow_embeds[j]
+        all_sims = np.zeros((len(inflow_embeds), len(outflow_embeds), window_count))
+        with tqdm(total=len(inflow_embeds)*len(outflow_embeds)) as pbar:
+            pbar.set_description("Building similarities matrix...")
+            for i in range(len(inflow_embeds)):
+                for j in range(len(outflow_embeds)):
+                    flow1 = inflow_embeds[i]
+                    flow2 = outflow_embeds[j]
 
-                window_sims = F.cosine_similarity(flow1, flow2, dim=1)
-                window_sims = window_sims.flatten().numpy(force=True)
+                    window_sims = F.cosine_similarity(flow1, flow2, dim=1)
+                    window_sims = window_sims.flatten().numpy(force=True)
 
-                all_sims[i,j] = window_sims
+                    all_sims[i,j] = window_sims
+                    pbar.update(1)
         return all_sims
 
     print("=> Calculating sims...")
-    va_corr, va_corr = build_sims(va_embeds, va_labels)
-    te_sims, te_corr = build_sims(te_embeds, te_labels)
+    va_sims = build_sims(va_inflow_embeds, va_outflow_embeds)
+    te_sims = build_sims(te_inflow_embeds, te_outflow_embeds)
 
     with open(args.dists_file, 'wb') as fi:
         pickle.dump({'va_sims': va_sims, 
-                    'va_corr': va_corr, 
-                    'te_sims': te_sims, 
-                    'te_corr': te_corr}, fi)
+                    'te_sims': te_sims}, fi)
 
