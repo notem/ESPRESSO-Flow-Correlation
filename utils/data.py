@@ -43,6 +43,9 @@ class BaseDataset(data.Dataset):
             If True, the data processor will be applied on samples before windowing.
         """
 
+        # useful info to have on hand...
+        self.window_count = window_kwargs['window_count'] if window_kwargs is not None else 1
+
         self.IDs = []       # full list of unique identifiers for circuit streams
         self.data = dict()  # link ID to stream content
 
@@ -82,6 +85,7 @@ class BaseDataset(data.Dataset):
                         sample = data_processor(sample)
                     self.data[ID].append([sample])
 
+
     def __len__(self):
         """
         Count of all streams within the dataset.
@@ -107,7 +111,7 @@ class TripletDataset(BaseDataset):
         vars(self).update(vars(dataset))  # load dataset attributes
 
         # create and shuffle indices for samples
-        self.generate_triplets(max_triplets=len(dataset))
+        self.generate_triplets()
 
     def __len__(self):
         """
@@ -259,16 +263,17 @@ class TripletDataset(BaseDataset):
             return
         # no candidate triplets? randomly sample triplets
 
-        # setup random window triplet with no mining
-        with tqdm(total=len(self.IDs)**2, 
+        # setup random window triplets with no mining
+        with tqdm(total=len(self.IDs)*self.window_count, 
                   dynamic_ncols=True) as pbar:
             pbar.set_description(f'Generating random triplets...')
             for index in range(len(self.IDs)):
                 ID = self.IDs[index]    # chain ID for anchor & positive
-                for tmp_idx in range(len(self.IDs)):
-                    if tmp_idx != index:
-                        neg_ID = self.IDs[tmp_idx]
-                        self.triplets.append(((ID, -1), (ID, -1), (neg_ID, -1)))
+                for i in range(self.window_count):
+                    neg_ID = None  # pick a random negative ID
+                    while neg_ID != ID:
+                        neg_ID = random.choice(self.IDs)
+                    self.triplets.append(((ID, i), (ID, i), (neg_ID, -1)))
                     pbar.update(1)
         if max_triplets is not None:
             self._trim_triplets(max_triplets)
@@ -438,7 +443,7 @@ def load_dataset(root_dir,
 
     for filename in inflow_files:
         inflow_sample_pth = os.path.join(inflow_dir, filename)
-        outflow_sample_pth = os.path.join(inflow_dir, filename)
+        outflow_sample_pth = os.path.join(outflow_dir, filename)
 
         if os.path.exists(outflow_sample_pth):
 

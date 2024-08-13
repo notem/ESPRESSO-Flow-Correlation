@@ -140,7 +140,7 @@ if __name__ == "__main__":
     opt_betas       = (0.9, 0.999)
     opt_wd          = 0.001
     steplr_step     = args.decay_step
-    steplr_gamma    = 0.25
+    steplr_gamma    = 0.7
     loss_margin     = args.loss_margin
     use_same_fen    = args.single_fen
     # # # # # #
@@ -287,7 +287,7 @@ if __name__ == "__main__":
     # stream window definitions
     window_kwargs = model_config['window_kwargs']
 
-    def make_dataloader(idx):
+    def make_dataloader(idx, shuffle=False):
         """
         """
         # load data from files
@@ -306,7 +306,7 @@ if __name__ == "__main__":
         loader = DataLoader(dataset,
                             batch_size = batch_size, 
                             collate_fn = dataset.batchify,
-                            shuffle = True)
+                            shuffle = shuffle)
         return dataset, loader
 
     # construct dataloaders
@@ -315,7 +315,7 @@ if __name__ == "__main__":
     print("Loading validation data...")
     va_data, validationloader = make_dataloader(va_idx)
     print("Loading training data...")
-    tr_data, trainloader = make_dataloader(tr_idx)
+    tr_data, trainloader = make_dataloader(tr_idx, shuffle=True)
 
 
     # # # # # #
@@ -379,7 +379,7 @@ if __name__ == "__main__":
                     inflow_embed = inflow_fen(inflow)
                     outflow_embed = outflow_fen(outflow)
 
-                    if args.hard and not eval_only:
+                    if args.hard:
                         loss = hard_criterion(inflow_embed, outflow_embed)
                     else:
                         loss = all_criterion(inflow_embed, outflow_embed)
@@ -417,7 +417,9 @@ if __name__ == "__main__":
                 
                 last_lr = scheduler.get_last_lr()
                 if last_lr and not eval_only:
-                    mod_desc = desc + f' | lr={last_lr[0]}'
+                    mod_desc = desc + f'[lr={last_lr[0]}]'
+                else:
+                    mod_desc = desc
                 pbar.set_description(mod_desc)
 
         tot_loss /= batch_idx + 1

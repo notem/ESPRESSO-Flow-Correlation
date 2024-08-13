@@ -36,10 +36,10 @@ def calc_metrics(corr_true, corr_pred):
     """
     corr_true = corr_true.astype(bool)
     corr_pred = corr_pred.astype(bool)
-    TP = np.triu(corr_pred & corr_true).sum()
-    TN = np.triu(~corr_pred & ~corr_true).sum()
-    FP = np.triu(corr_pred & ~corr_true).sum()
-    FN = np.triu(~corr_pred & corr_true).sum()
+    TP = (corr_pred & corr_true).sum()
+    TN = (~corr_pred & ~corr_true).sum()
+    FP = (corr_pred & ~corr_true).sum()
+    FN = (~corr_pred & corr_true).sum()
     return TP, TN, FP, FN
 
 def calc_min_sim(sims, corr, perc=1.0):
@@ -87,6 +87,7 @@ def evaluate(sims,
         # compute metrics from votes
         corr_pred = tally_votes(votes, vote_thr)
         tp, tn, fp, fn = calc_metrics(corr_true, corr_pred)
+        print(tp, tn, fp, fn, tp+fn, tn+fp)
 
         fpr.append((fp / (fp + tn)) if fp+tn > 0 else 0.)
         tpr.append((tp / (tp + fn)) if tp+fn > 0 else 0.)
@@ -164,7 +165,9 @@ if __name__ == "__main__":
     plt.title(f'Receiver Operating Characteristic')
     plt.plot(fpr, tpr, 'b', label = 'AUC = %0.6f' % roc_auc)
     plt.legend(loc = 'lower right')
-    plt.plot([0, 1], [0, 1],'--')
+    plt.plot(np.linspace(0, 1, 100000), 
+             np.linspace(0, 1, 100000), 
+             '--')
     plt.xlim([1e-8, 1e-1])
     plt.ylim([0, 1])
     plt.ylabel('True Positive Rate')
