@@ -104,6 +104,7 @@ def parse_args():
                         help='Use the original DeepCoFFEA model and windowing strategy.')
     parser.add_argument('--decay_step',
                         default = 100,
+                        type = int,
                         help='Learning rate is decayed after this number of epochs.')
 
     return parser.parse_args()

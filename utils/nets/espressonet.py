@@ -61,7 +61,7 @@ class EspressoNet(nn.Module):
 
         # (local) mixing op uses convolutions only
         elif "conv" in mixer_kwargs['type']:
-            self.mixer = partial(nn.Conv1d, **mixer_kwargs)
+            self.mixer = partial(ConvMixer, **mixer_kwargs)
 
         # No mixing op (signal processing is performed by MLPs only)
         else:

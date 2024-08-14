@@ -81,6 +81,7 @@ class OnlineCosineTripletLoss(nn.Module):
             all_sim = torch.mm(in_embeddings, out_embeddings.t())
         elif in_embeddings.dim() == 3:
             all_sim = torch.matmul(in_embeddings.permute(1,0,2), out_embeddings.permute(1,2,0))
+            all_sim = all_sim.mean(0)
 
         labels = torch.arange(in_embeddings.size(0)).to(in_embeddings.get_device())
 
@@ -129,6 +130,7 @@ class OnlineHardCosineTripletLoss(nn.Module):
 
         elif in_embeddings.dim() == 3:
             all_sim = torch.matmul(in_embeddings.permute(1,0,2), out_embeddings.permute(1,2,0))
+            all_sim = all_sim.mean(0)
 
         # find hardest positive pairs (when positive has low sim)
         # mask of all valid positives

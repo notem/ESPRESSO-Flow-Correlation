@@ -6,6 +6,17 @@ from timm.layers import to_2tuple
 from functools import partial
 
 
+class ConvMixer(nn.Module):
+    """
+    """
+    def __init__(self, dim, kernel_size, **kwargs):
+        super().__init__()
+        self.conv = nn.Conv1d(dim, dim, kernel_size)
+
+    def forward(self, x, **kwargs):
+        return self.conv(x)
+
+
 class MHSAttention(nn.Module):
     """
     Vanilla self-attention from Transformer: https://arxiv.org/abs/1706.03762.

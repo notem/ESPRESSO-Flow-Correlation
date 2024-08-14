@@ -201,9 +201,11 @@ if __name__ == "__main__":
     plt.title(f'Receiver Operating Characteristic')
     plt.plot(fpr, tpr, 'b', label = 'AUC = %0.6f' % roc_auc)
     plt.legend(loc = 'lower right')
-    plt.plot([0, 1], [0, 1],'--')
-    plt.xlim([1e-8, 1e-1])
-    plt.ylim([0, 1])
+    plt.plot(np.linspace(0, 1, 100000), 
+             np.linspace(0, 1, 100000), 
+             'k--')
+    plt.xlim([1e-8, 1])
+    plt.ylim([-0.03, 1])
     plt.ylabel('True Positive Rate')
     plt.xlabel('False Positive Rate')
     plt.xscale('log')
