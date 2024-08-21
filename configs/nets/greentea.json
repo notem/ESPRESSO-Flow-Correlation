@@ -3,7 +3,7 @@
     "input_size": 1200,
     "feature_dim": 64,
     "hidden_dim": 96,
-    "depth": 8,
+    "depth": 9,
     "input_conv_kwargs": {
         "kernel_size": 3,
         "stride": 3,

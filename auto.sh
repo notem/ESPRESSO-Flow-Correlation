@@ -1,8 +1,8 @@
 
-#MODEL_ARCH=espresso
+MODEL_ARCH=espresso
 #MODEL_ARCH=greentea
 #MODEL_ARCH=hotwater
-MODEL_ARCH=dcf
+#MODEL_ARCH=dcf
 
 EXP_CONFIG=./configs/exps/june.json
 #EXP_CONFIG=./configs/exps/august.json
@@ -10,8 +10,9 @@ EXP_CONFIG=./configs/exps/june.json
 
 ARCH_CONFIG=./configs/nets/${MODEL_ARCH}.json
 
-TRAIN_MODE=offline
-EXTRA="--margin 0.1"
+TRAIN_MODE=online
+EXTRA="--margin 0.5"
+EXTRA="$EXTRA --decay_step 200 --bs 256"
 
 if [ "$TRAIN_MODE" == "online" ]; then
     EXTRA="$EXTRA --online --hard"
