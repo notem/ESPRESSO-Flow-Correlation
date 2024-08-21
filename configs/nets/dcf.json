@@ -1,5 +1,7 @@
 {
     "model": "DCF",
+    "inflow_size": 1000,
+    "outflow_size": 1600,
     "feature_dim": 64,
     "features": [
         "dcf"

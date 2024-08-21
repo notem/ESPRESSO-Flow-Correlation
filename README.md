@@ -12,26 +12,35 @@ This repository has the following features:
 
 - Train using the original DeepCoFFEA method and FEN
 ```
-python train.py --loss_margin 0.1 --data_dir ${path/to/rootdir} --dcf 
+python train.py --loss_margin 0.1 \
+                --exp_config ./configs/exps/june.json \
+                --net_config ./configs/nets/dcf.json --dcf 
 ```
 
 - Train using the ESPRESSO method and FEN
 ```
-python train.py --loss_margin 0.1 --data_dir ${path/to/rootdir} --online --hard
+python train.py --loss_margin 0.5 \
+                --exp_config ./configs/exps/june.json \
+                --net_config ./configs/nets/espresso.json \
+                --online --hard
 ```
 
 - Generate window similarity matrix using a trained FEN
 ```
-python calc-sims.py --dists_file ./exps/1/dists.pkl --ckpt ${path/to/ckptfile} --data_dir ${path/to/rootdir}
+python calc-sims.py --dists_file ./exps/1/dists.pkl \
+                    --ckpt ${path/to/ckptfile} \
+                    --exp_config ./configs/exps/june.json
 ```
 
 - Evaluate correlation efficacy using window voting and local thresholding
 ```
-python benchmark-thr.py --dists_file ./exps/1/dists.pkl --results_file ./exps/1/res.pkl
+python benchmark-thr.py --dists_file ./exps/1/dists.pkl \
+                        --results_file ./exps/1/res.pkl
 ```
 
 - Evaluate correlation efficacy using MLP predictor
 ```
-python benchmark-mlp.py --dists_file ./exps/1/dists.pkl --results_file ./exps/1/res.pkl
+python benchmark-mlp.py --dists_file ./exps/1/dists.pkl \
+                        --results_file ./exps/1/res.pkl
 ```
 

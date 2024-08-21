@@ -1,22 +1,14 @@
 import torch
-import torch.nn as nn
 import torch.optim as optim
-import torch.nn.functional as F
-from torch import Tensor
 import numpy as np
-import math
 import os
-from os.path import join
-import pickle as pkl
 from tqdm import tqdm
-from torchvision import transforms, utils
-import transformers
-import scipy
 import json
 import time
 import argparse
 from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import StepLR
+import sys
 
 from utils.nets.espressonet import EspressoNet
 from utils.nets.dcfnet import Conv1DModel
@@ -24,7 +16,6 @@ from utils.nets.transdfnet import DFNet
 from utils.processor import DataProcessor
 from utils.data import *
 from utils.loss import *
-
 
 
 # enable if NaN or other odd behavior appears
@@ -38,7 +29,6 @@ torch.autograd.profiler.emit_nvtx(False)
 torch.backends.cudnn.benchmark = True
 
 
-
 def parse_args():
     parser = argparse.ArgumentParser(
                         prog = 'train.py',
@@ -47,11 +37,11 @@ def parse_args():
                         )
 
     # experiment configuration options
-    parser.add_argument('--data_dir', 
-                        default = './data/undefended', 
+    parser.add_argument('--exp_config',
+                        default = './configs/exps/june.json',
                         type = str,
-                        help = "Path to dataset root 'pathx' directory.", 
-                        required=True)
+                        help = "Path to JSON config file containing dataset configuration.", 
+                        required = True)
     parser.add_argument('--ckpt_dir',
                         default = './exps/ckpts',
                         type = str,
@@ -60,20 +50,20 @@ def parse_args():
                         default = './exps/logs',
                         type = str,
                         help = "Set directory to store the training history log.")
-    parser.add_argument('--ckpt', 
+    parser.add_argument('--resume', 
                         default = None, 
                         type = str,
                         help = "Resume from checkpoint path.")
-    parser.add_argument('--exp_name',
-                        type = str,
-                        default = f'{time.strftime("%Y%m%d-%H%M%S")}',
-                        help = "")
 
     # Model architecture options
-    parser.add_argument('--config',
-                        default = None,
+    parser.add_argument('--net_config',
+                        default = './configs/nets/espresso.json',
                         type = str,
-                        help = "Set model config (as JSON file)")
+                        help = "Set model config (as JSON file)",
+                        required = True)
+    parser.add_argument('--dcf', 
+                        default=False, action='store_true',
+                        help='Use the original DeepCoFFEA model and windowing strategy.')
     parser.add_argument('--input_size', 
                         default = None, 
                         type = int,
@@ -82,7 +72,7 @@ def parse_args():
                         default=None, type=str, nargs="+",
                         help='Overwrite the features used in the config file. Multiple features can be provided.')
     parser.add_argument('--bs', 
-                        default=64, type=int,
+                        default=128, type=int,
                         help='Size of batches.')
     parser.add_argument('--epochs', 
                         default=10000, type=int,
@@ -93,15 +83,12 @@ def parse_args():
     parser.add_argument('--hard', 
                         default=False, action='store_true', 
                         help='Use hard negative mining during training epochs.')
-    parser.add_argument('--loss_margin', 
+    parser.add_argument('--margin', 
                         default=0.1, type=float, 
                         help='The margin to use for triplet loss and semi-hard mining.')
     parser.add_argument('--single_fen', 
                         default=False, action='store_true',
                         help='Use the same FEN for in and out flows.')
-    parser.add_argument('--dcf', 
-                        default=False, action='store_true',
-                        help='Use the original DeepCoFFEA model and windowing strategy.')
     parser.add_argument('--decay_step',
                         default = 100,
                         type = int,
@@ -118,7 +105,7 @@ if __name__ == "__main__":
     args = parse_args()
 
     # load checkpoint (if it exists)
-    checkpoint_path = args.ckpt
+    checkpoint_path = args.resume
     checkpoint_fname = None
     resumed = None
     if checkpoint_path and os.path.exists(checkpoint_path):
@@ -139,10 +126,10 @@ if __name__ == "__main__":
     save_best_epoch = True
     opt_lr          = 1e-3
     opt_betas       = (0.9, 0.999)
-    opt_wd          = 0.001
+    opt_wd          = 1e-3
     steplr_step     = args.decay_step
     steplr_gamma    = 0.7
-    loss_margin     = args.loss_margin
+    loss_margin     = args.margin
     use_same_fen    = args.single_fen
     # # # # # #
 
@@ -152,64 +139,11 @@ if __name__ == "__main__":
     # DF model config
     if resumed:
         model_config = resumed['config']
-    elif args.config:
-        with open(args.config, 'r') as fi:
-            model_config = json.load(fi)
-    elif args.dcf:
-        model_config = {
-                'model': "DCF",
-                'feature_dim': 64,
-                "features": [
-                    "dcf",
-                    ],
-                "window_kwargs": {
-                     'window_count': 11, 
-                     'window_width': 5, 
-                     'window_overlap': 3,
-                     "include_all_window": False,
-                    },
-            }
     else:
-        model_config = {
-                'model': "Espresso",
-                'input_size': 1200,
-                'feature_dim': 64,
-                'hidden_dim': 96,
-                'depth': 8,
-                'input_conv_kwargs': {
-                    'kernel_size': 3,
-                    'stride': 3,
-                    'padding': 0,
-                    },
-                'output_conv_kwargs': {
-                    'kernel_size': 50,
-                    'stride': 3,
-                    'padding': 0,
-                    },
-                "mixer_kwargs": {
-                    "type": "mhsa",
-                    "head_dim": 16,
-                    "use_conv_proj": True,
-                    "kernel_size": 3,
-                    "stride": 2,
-                    "feedforward_style": "mlp",
-                    "feedforward_ratio": 4,
-                    "feedforward_drop": 0.0
-                },
-                "features": [
-                    "interval_dirs_up",
-                    "interval_dirs_down",
-                    "interval_dirs_sum",
-                    "interval_dirs_sub",
-                    "interval_size_up",
-                    "interval_size_down",
-                    "interval_size_sum",
-                    "interval_size_sub",
-                    "interval_cumul_norm",
-                    ],
-                "window_kwargs": None,
-            }
-        
+        with open(args.net_config, 'r') as fi:
+            model_config = json.load(fi)
+    
+    # setup model config information
     model_name = model_config['model']
     if args.input_size is not None:
         model_config['input_size'] = args.input_size
@@ -222,20 +156,20 @@ if __name__ == "__main__":
     print("==> Model configuration:")
     print(json.dumps(model_config, indent=4))
 
-    # traffic feature extractor
+    # initialize traffic feature extractor networks
     if model_arch.lower() == "espresso":
         inflow_fen = EspressoNet(input_channels=len(features),
                                 **model_config)
     elif model_arch.lower() == "dcf":
         inflow_fen = Conv1DModel(input_channels=len(features),
-                                input_size = 500,
+                                input_size = model_config.get('inflow_size', 1000),
                                 **model_config)
     elif model_arch.lower() == "laserbeak":
         inflow_fen = DFNet(input_channels=len(features),
-                                input_size = 500,
+                                input_size = model_config.get('inflow_size', 500),
                                 **model_config)
     else:
-        import sys
+        print(f"Invalid model architecture name \'{model_arch}\'!")
         sys.exit(-1)
 
     inflow_fen = inflow_fen.to(device)
@@ -248,16 +182,15 @@ if __name__ == "__main__":
 
     else:
         if model_arch.lower() == "espresso":
-            # traffic feature extractor
             outflow_fen = EspressoNet(input_channels=len(features),
                                     **model_config)
         elif model_arch.lower() == "dcf":
             outflow_fen = Conv1DModel(input_channels=len(features),
-                                    input_size = 800,
+                                    input_size = model_config.get('outflow_size', 1600),
                                     **model_config)
         elif model_arch.lower() == "laserbeak":
             outflow_fen = Conv1DModel(input_channels=len(features),
-                                    input_size = 800,
+                                    input_size = model_config.get('outflow_size', 800),
                                     **model_config)
 
         outflow_fen = outflow_fen.to(device)
@@ -273,17 +206,19 @@ if __name__ == "__main__":
     print(f'=> Model is {param_count}m parameters large.')
     # # # # # #
 
-
     # # # # # #
     # create data loaders
     # # # # # #
     # multi-channel feature processor
     processor = DataProcessor(features)
 
-    # dataset split indices
-    tr_idx = np.arange(0, 9000)
-    va_idx = np.arange(9000, 10000)
-    te_idx = np.arange(10000,11000)
+    with open(args.exp_config, 'r') as fi:
+        data_config = json.load(fi)
+    
+    va_idx = np.arange(data_config['va_range'][0], 
+                       data_config['va_range'][1])
+    tr_idx = np.arange(data_config['tr_range'][0], 
+                       data_config['tr_range'][1])
 
     # stream window definitions
     window_kwargs = model_config['window_kwargs']
@@ -292,7 +227,12 @@ if __name__ == "__main__":
         """
         """
         # load data from files
-        samples = load_dataset(args.data_dir, sample_list = idx)
+        if data_config['mode'] == 'pickle':
+            samples = load_dataset_pkl(data_config['data_path'], 
+                                       batch_list = idx)
+        else:
+            samples = load_dataset_text(data_config['data_path'], 
+                                        sample_list = idx)
 
         # build base dataset object
         data = BaseDataset(samples, processor,
@@ -311,13 +251,10 @@ if __name__ == "__main__":
         return dataset, loader
 
     # construct dataloaders
-    print("Loading testing data...")
-    te_data, testloader = make_dataloader(te_idx)
     print("Loading validation data...")
     va_data, validationloader = make_dataloader(va_idx)
     print("Loading training data...")
     tr_data, trainloader = make_dataloader(tr_idx, shuffle=True)
-
 
     # # # # # #
     # optimizer and params, reload from resume is possible
@@ -341,8 +278,7 @@ if __name__ == "__main__":
 
     # define checkpoint fname if not provided
     if not checkpoint_fname:
-        checkpoint_fname = f'{model_name}'
-        checkpoint_fname += f'_{args.exp_name}'
+        checkpoint_fname = f'{model_name}_{time.strftime("%Y%m%d-%H%M%S")}'
 
     # create checkpoint directory if necesary
     if not os.path.exists(f'{checkpoint_dir}/{checkpoint_fname}/'):
@@ -350,13 +286,11 @@ if __name__ == "__main__":
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
 
-
     if args.online:
         all_criterion = OnlineCosineTripletLoss(margin=loss_margin)
         hard_criterion = OnlineHardCosineTripletLoss(margin=loss_margin)
     else:
         criterion = CosineTripletLoss(margin=loss_margin)
-
 
     def epoch_iter(dataloader, 
                    eval_only=False, 
@@ -449,11 +383,6 @@ if __name__ == "__main__":
                                             eval_only = True, 
                                             desc = f"Epoch {epoch} Val.")
                 metrics.update({'va_loss': va_loss})
-            with torch.no_grad():
-                test_loss = epoch_iter(testloader, 
-                                        eval_only = True, 
-                                        desc = f"Epoch {epoch} Test")
-            metrics.update({'te_loss': test_loss})
 
             # save model
             if (epoch % ckpt_period) == (ckpt_period-1):
@@ -484,8 +413,9 @@ if __name__ == "__main__":
             history[epoch] = metrics
 
             if not args.online:  # generate new triplets
-                tr_data.generate_triplets(fens = (inflow_fen, outflow_fen), 
-                                          margin = loss_margin if not args.hard else 0.)
+                tr_data.generate_triplets(
+                        fens = (inflow_fen, outflow_fen), 
+                        margin = loss_margin if not args.hard else 0.)
 
     except KeyboardInterrupt:
         pass

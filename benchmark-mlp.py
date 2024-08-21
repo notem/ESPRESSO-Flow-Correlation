@@ -14,15 +14,21 @@ import transformers
 
 
 class MyDataset(Dataset):
-    def __init__(self, sims):
-        self.indices = np.triu_indices(sims.shape[0], m=sims.shape[1])
+    def __init__(self, sims, ratio=1):
+        indices = [[],[]]
+        for i in range(sims.shape[0]):
+            for j in range(sims.shape[1]):
+                indices[0].append(i)
+                indices[1].append(j)
+        self.indices = np.array(indices)
         self.inputs = sims
         self.targets = np.eye(sims.shape[0], sims.shape[1])
 
-        corr_count = np.sum(np.triu(self.targets))
-        corr_weight = len(self.indices) / corr_count
-        self.weights = torch.DoubleTensor([corr_weight if self.targets[self.indices[0][i], self.indices[0][i]] 
-                                                    else 1-corr_weight for i in range(len(self.indices[0]))])
+        corr_count = np.sum(self.targets)
+        corr_weight = (sims.shape[0] * sims.shape[1]) / corr_count
+        corr_weight /= ratio
+        self.weights = torch.DoubleTensor([corr_weight if self.targets[self.indices[0][i], self.indices[1][i]] 
+                                                    else 1 for i in range(len(self.indices[0]))])
 
     def __len__(self):
         return len(self.indices[0])
@@ -37,7 +43,7 @@ class Predictor(nn.Module):
     """
     Simple MLP for binary prediction
     """
-    def __init__(self, dim, drop=0.7, ratio=1, layers=2):
+    def __init__(self, dim, drop=0.5, ratio=2, layers=3):
         super(Predictor, self).__init__()
         modules = []
         for i in range(layers):
@@ -53,10 +59,12 @@ class Predictor(nn.Module):
         self.dropout = nn.Dropout(drop)
 
     def forward(self, x):
+        x = self.dropout(x)
         for i,module in enumerate(self.fc_modules):
             x = self.dropout(module(x))
         x = torch.sigmoid(self.pred(x))
         return x
+
 
 
 def parse_args():
@@ -77,6 +85,11 @@ def parse_args():
                         type = str,
                         help = "Path to dataset root 'pathx' directory.", 
                         required=True)
+    parser.add_argument('--drop',
+                        default = 0.5,
+                        type=float,
+                        help="Dropout percentage during training.",
+                  )
 
     return parser.parse_args()
 
@@ -97,29 +110,31 @@ if __name__ == "__main__":
     te_dataset = MyDataset(data['te_sims'])
     
     # Create PyTorch dataloaders
-    batch_size = 256
-    num_epochs = 5
+    tr_batch_size = 256
+    te_batch_size = 2048
+    num_epochs = 10
     
     # use weighted sampler to balance training dataset
     tr_sampler = WeightedRandomSampler(tr_dataset.weights, len(tr_dataset.weights))
     tr_loader = DataLoader(tr_dataset, 
-            batch_size = batch_size, 
+            batch_size = tr_batch_size, 
             sampler = tr_sampler,
             pin_memory = True,
             )
     # (no sampler) evaluate on all pairwise cases in test set
     te_loader = DataLoader(te_dataset, 
-            batch_size = batch_size, 
+            batch_size = te_batch_size, 
             shuffle = False)
     
     # Instantiate the model and move it to GPU if available
-    model = Predictor(dim=tr_dataset.inputs.shape[-1])
+    model = Predictor(dim=tr_dataset.inputs.shape[-1], 
+                      drop=args.drop)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model.to(device)
     
     # Define the loss function and the optimizer
     criterion = nn.BCELoss()
-    optimizer = optim.AdamW(model.parameters(), lr=1e-3)
+    optimizer = optim.AdamW(model.parameters(), lr=1e-3, weight_decay=0.5)
     scheduler = transformers.get_linear_schedule_with_warmup(optimizer, 
                                                 len(tr_loader), 
                                                 len(tr_loader)*num_epochs)
@@ -189,7 +204,8 @@ if __name__ == "__main__":
         print(f'Epoch {epoch+1}/{num_epochs}, Test Loss: {test_loss:.4f}, Test Accuracy: {test_acc:.4f}')
     
     # Compute the ROC curve
-    fpr, tpr, thresholds = metrics.roc_curve(targets_list, outputs_list)
+    fpr, tpr, thresholds = metrics.roc_curve(targets_list, outputs_list,
+                                             drop_intermediate=True)
     roc_auc = metrics.auc(fpr, tpr)
 
     # store results
@@ -199,13 +215,13 @@ if __name__ == "__main__":
     
     import matplotlib.pyplot as plt
     plt.title(f'Receiver Operating Characteristic')
-    plt.plot(fpr, tpr, 'b', label = 'AUC = %0.6f' % roc_auc)
+    plt.plot(fpr[1:-1], tpr[1:-1], 'b', label = 'AUC = %0.6f' % roc_auc)
     plt.legend(loc = 'lower right')
     plt.plot(np.linspace(0, 1, 100000), 
              np.linspace(0, 1, 100000), 
              'k--')
     plt.xlim([1e-8, 1])
-    plt.ylim([-0.03, 1])
+    plt.ylim([-0.03, 1.])
     plt.ylabel('True Positive Rate')
     plt.xlabel('False Positive Rate')
     plt.xscale('log')

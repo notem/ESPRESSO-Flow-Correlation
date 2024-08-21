@@ -15,8 +15,11 @@
         "padding": 0
     },
     "mixer_kwargs": {
-        "type": "conv",
-        "kernel_size": 7
+        "type": "none",
+        "block_dropout": 0.1,
+        "feedforward_style": "mlp",
+        "feedforward_ratio": 4,
+        "feedforward_drop": 0.0
     },
     "features": [
         "interval_dirs_up",

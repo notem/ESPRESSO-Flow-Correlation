@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from torch import Tensor
 
 
+
 class TripletLoss(nn.Module):
     def __init__(self, margin=1.0):
         super(TripletLoss, self).__init__()
@@ -15,19 +16,43 @@ class TripletLoss(nn.Module):
         loss = F.relu(pos_dist - neg_dist + self.margin)
         return loss.mean()
 
+
 class CosineTripletLoss(nn.Module):
     def __init__(self, margin=0.1):
         super(CosineTripletLoss, self).__init__()
         self.margin = margin
-        self.cosine_sim = nn.CosineSimilarity(dim=1, eps=1e-6)
+        self.sim = nn.CosineSimilarity(dim=-1)
 
     def forward(self, anchor, positive, negative):
-        pos_sim = self.cosine_sim(anchor, positive)
-        neg_sim = self.cosine_sim(anchor, negative)
+        pos_sim = self.sim(anchor, positive)
+        neg_sim = self.sim(anchor, negative)
         loss = F.relu(neg_sim - pos_sim + self.margin)
         return loss.mean()
 
+
+def compute_sim(in_emb, out_emb):
+    """
+    """
+    # Normalize each vector (element) to have unit norm
+    norms = torch.norm(in_emb, p=2, dim=-1, keepdim=True)  # Compute L2 norms
+    in_emb = in_emb / norms  # Divide by norms to normalize
+    
+    norms = torch.norm(out_emb, p=2, dim=-1, keepdim=True)  # Compute L2 norms
+    out_emb = out_emb / norms  # Divide by norms to normalize
+    
+    # Compute pairwise cosine similarity
+    if in_emb.dim() == 2:
+        all_sim = torch.mm(in_emb, out_emb.t())
+    elif in_emb.dim() == 3:
+        all_sim = torch.matmul(in_emb.permute(1,0,2), out_emb.permute(1,2,0))
+        all_sim = all_sim.mean(0)
+
+    return all_sim
+
+
 class OnlineCosineTripletLoss(nn.Module):
+    """
+    """
     def __init__(self, margin = 0.1, semihard = True):
         super(OnlineCosineTripletLoss, self).__init__()
         self.margin = margin
@@ -69,19 +94,7 @@ class OnlineCosineTripletLoss(nn.Module):
     def forward(self, in_embeddings, out_embeddings):
         """
         """
-        # Normalize each vector (element) to have unit norm
-        norms = torch.norm(in_embeddings, p=2, dim=-1, keepdim=True)  # Compute L2 norms
-        in_embeddings = in_embeddings / norms  # Divide by norms to normalize
-
-        norms = torch.norm(out_embeddings, p=2, dim=-1, keepdim=True)  # Compute L2 norms
-        out_embeddings = out_embeddings / norms  # Divide by norms to normalize
-        
-        # Compute pairwise cosine similarity
-        if in_embeddings.dim() == 2:
-            all_sim = torch.mm(in_embeddings, out_embeddings.t())
-        elif in_embeddings.dim() == 3:
-            all_sim = torch.matmul(in_embeddings.permute(1,0,2), out_embeddings.permute(1,2,0))
-            all_sim = all_sim.mean(0)
+        all_sim = compute_sim(in_embeddings, out_embeddings)
 
         labels = torch.arange(in_embeddings.size(0)).to(in_embeddings.get_device())
 
@@ -109,6 +122,8 @@ class OnlineCosineTripletLoss(nn.Module):
 
 
 class OnlineHardCosineTripletLoss(nn.Module):
+    """
+    """
     def __init__(self, margin=0.1):
         super(OnlineHardCosineTripletLoss, self).__init__()
         self.margin = margin
@@ -117,20 +132,7 @@ class OnlineHardCosineTripletLoss(nn.Module):
         """
         Args:
         """
-        # Normalize each vector (element) to have unit norm
-        norms = torch.norm(in_embeddings, p=2, dim=-1, keepdim=True)  # Compute L2 norms
-        in_embeddings = in_embeddings / norms  # Divide by norms to normalize
-
-        norms = torch.norm(out_embeddings, p=2, dim=-1, keepdim=True)  # Compute L2 norms
-        out_embeddings = out_embeddings / norms  # Divide by norms to normalize
-        
-        # Compute pairwise cosine similarity
-        if in_embeddings.dim() == 2:
-            all_sim = torch.mm(in_embeddings, out_embeddings.t())
-
-        elif in_embeddings.dim() == 3:
-            all_sim = torch.matmul(in_embeddings.permute(1,0,2), out_embeddings.permute(1,2,0))
-            all_sim = all_sim.mean(0)
+        all_sim = compute_sim(in_embeddings, out_embeddings)
 
         # find hardest positive pairs (when positive has low sim)
         # mask of all valid positives

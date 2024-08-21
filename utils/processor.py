@@ -173,7 +173,8 @@ class DataProcessor:
             feature_dict['iats'] = iats
 
         if self._is_enabled("dcf"):
-            feature_dict['dcf'] = torch.cat((feature_dict['iats']*feature_dict['dirs'], feature_dict['size_dirs']))
+            feature_dict['dcf'] = torch.cat((feature_dict['iats']*feature_dict['dirs'] * 1000., 
+                                             feature_dict['size_dirs'] / 1000.))
 
         if self._is_enabled("cumul"):
             # Direction-based representations
@@ -390,8 +391,11 @@ class DataProcessor:
                 feature_dict['interval_rates'] = interval_rates
 
         # adjust feature vectors sizes to match traffic sequence length and stack
-        target_size = max(*[t.numel() for t in feature_dict.values()])
-        feature_stack = list(fix_size(feature_dict[opt], target_size) for opt in self.process_options)
+        if len(self.process_options) > 1:
+            target_size = max(*[feature_dict[opt].numel() for opt in self.process_options])
+            feature_stack = list(fix_size(feature_dict[opt], target_size) for opt in self.process_options)
+        else:
+            feature_stack = [feature_dict[self.process_options[0]]]
         features = torch.nan_to_num(torch.stack(feature_stack, dim=-1))
 
         #assert not torch.any(features.isnan())

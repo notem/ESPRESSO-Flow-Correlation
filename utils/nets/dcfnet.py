@@ -66,6 +66,7 @@ class Conv1DModel(nn.Module):
     def forward(self, x):
         """
         """
+        x = x.float()
         # add channel dim if necessary
         if len(x.shape) < 3:
             x = x.unsqueeze(1)

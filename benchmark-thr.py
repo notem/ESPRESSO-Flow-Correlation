@@ -12,6 +12,13 @@ import argparse
 import os
 import pickle
 
+# strategically selected Ks for smooth curve
+DEFAULT_K = (1,2,4,8,16,32,64,96,
+             128,192,256,320,384,
+             448,512,640,768,896,
+             1024,1280,1536,1792,
+             2048,3072,4096)
+
 
 def calc_votes_thr(sims, sorted_sims, k=1):
     """
@@ -30,6 +37,7 @@ def tally_votes(votes, perc=0.8):
     corr_pred = (votes >= required_votes).astype(int)
 
     return corr_pred
+
 
 def calc_metrics(corr_true, corr_pred):
     """
@@ -54,9 +62,8 @@ def filter_votes(sims, votes, min_sim):
     votes[sims < min_sim] = 0
     return votes
 
-
 def evaluate(sims, 
-        ks = (1,2,4,8,16,32,64,128,256,512), 
+        ks = DEFAULT_K, 
         min_sim = None,
         vote_thr = 0.8,
         ):
@@ -87,7 +94,6 @@ def evaluate(sims,
         # compute metrics from votes
         corr_pred = tally_votes(votes, vote_thr)
         tp, tn, fp, fn = calc_metrics(corr_true, corr_pred)
-        print(tp, tn, fp, fn, tp+fn, tn+fp)
 
         fpr.append((fp / (fp + tn)) if fp+tn > 0 else 0.)
         tpr.append((tp / (tp + fn)) if tp+fn > 0 else 0.)
@@ -119,7 +125,7 @@ def parse_args():
                         help = "Path to dataset root 'pathx' directory.", 
                         required=True)
     parser.add_argument('--min_sim',
-                        default = None,
+                        default = 0.,
                         type = float,
                         help = "Percentile threshold of val. sims to use for filtering.")
 
@@ -151,6 +157,8 @@ if __name__ == "__main__":
     # evaluate performance on test set
     te_sims = data['te_sims']
     fpr, tpr, perf_metrics = evaluate(te_sims, min_sim = min_sim)
+    tpr = np.concatenate(([0.],tpr,[1.]))
+    fpr = np.concatenate(([0.],fpr,[1.]))
     acc = (perf_metrics[0][0] + perf_metrics[0][1]) / sum(perf_metrics[0])
     roc_auc = metrics.auc(fpr, tpr)
     print(f"Test accuracy: {acc}, roc: {roc_auc}")
@@ -163,7 +171,7 @@ if __name__ == "__main__":
     # plot ROC curve
     import matplotlib.pyplot as plt
     plt.title(f'Receiver Operating Characteristic')
-    plt.plot(fpr, tpr, 'b', label = 'AUC = %0.6f' % roc_auc)
+    plt.plot(fpr[1:-1], tpr[1:-1], 'b', label = 'AUC = %0.6f' % roc_auc)
     plt.legend(loc = 'lower right')
     plt.plot(np.linspace(0, 1, 100000), 
              np.linspace(0, 1, 100000), 

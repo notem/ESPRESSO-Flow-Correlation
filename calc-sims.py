@@ -9,7 +9,7 @@ import pickle
 from utils.nets.espressonet import EspressoNet
 from utils.nets.dcfnet import Conv1DModel
 from utils.nets.transdfnet import DFNet
-from utils.data import BaseDataset, load_dataset
+from utils.data import *
 from utils.processor import DataProcessor
 
 
@@ -33,11 +33,12 @@ def parse_args():
                         )
 
     # experiment configuration options
-    parser.add_argument('--data_dir', 
-                        default = '/data/path2', 
+    parser.add_argument('--exp_config',
+                        default = './configs/exps/june.json',
                         type = str,
-                        help = "Path to dataset root 'pathx' directory.", 
-                        required=True)
+                        help = "Path to JSON config file containing dataset configuration.", 
+                        required=True
+                    )
     parser.add_argument('--dists_file', 
                         default = '/data/path2', 
                         type = str,
@@ -90,12 +91,12 @@ if __name__ == "__main__":
                                 **model_config)
     elif model_name.lower() == 'dcf':
         inflow_fen = Conv1DModel(input_channels=len(features),
-                                 input_size = 500,
-                                 **model_config)
+                                input_size = model_config.get('inflow_size', 1000),
+                                **model_config)
     elif model_name.lower() == 'laserbeak':
         inflow_fen = DFNet(input_channels=len(features),
-                                 input_size = 500,
-                                 **model_config)
+                                input_size = model_config.get('inflow_size', 500),
+                                **model_config)
     inflow_fen = inflow_fen.to(device)
     inflow_fen.load_state_dict(resumed['inflow_fen'])
     inflow_fen.eval()
@@ -104,17 +105,17 @@ if __name__ == "__main__":
         outflow_fen = inflow_fen
 
     else:
-        if model_config['model'].lower() == "espresso":
+        if model_name.lower() == "espresso":
             outflow_fen = EspressoNet(input_channels=len(features),
                                     **model_config)
-        elif model_config['model'].lower() == 'dcf':
+        elif model_name.lower() == "dcf":
             outflow_fen = Conv1DModel(input_channels=len(features),
-                                    input_size = 800,
-                                     **model_config)
-        elif model_config['model'].lower() == 'laserbeak':
-            outflow_fen = DFNet(input_channels=len(features),
-                                    input_size = 800,
-                                     **model_config)
+                                    input_size = model_config.get('outflow_size', 1600),
+                                    **model_config)
+        elif model_name.lower() == "laserbeak":
+            outflow_fen = Conv1DModel(input_channels=len(features),
+                                    input_size = model_config.get('outflow_size', 800),
+                                    **model_config)
         outflow_fen = outflow_fen.to(device)
         outflow_fen.load_state_dict(resumed['outflow_fen'])
         outflow_fen.eval()
@@ -125,8 +126,13 @@ if __name__ == "__main__":
     # multi-channel feature processor
     processor = DataProcessor(features)
 
-    va_idx = np.arange(9000, 10000)
-    te_idx = np.arange(10000, 15000)
+    with open(args.exp_config, 'r') as fi:
+        data_config = json.load(fi)
+    
+    te_idx = np.arange(data_config['te_range'][0], 
+                       data_config['te_range'][1])
+    va_idx = np.arange(data_config['va_range'][0], 
+                       data_config['va_range'][1])
 
     # stream window definitions
     window_kwargs = model_config['window_kwargs']
@@ -135,7 +141,12 @@ if __name__ == "__main__":
         """
         """
         # load data from files
-        samples = load_dataset(args.data_dir, sample_list = idx)
+        if data_config['mode'] == 'pickle':
+            samples = load_dataset_pkl(data_config['data_path'], 
+                                       batch_list = idx)
+        else:
+            samples = load_dataset_text(data_config['data_path'], 
+                                        sample_list = idx)
 
         # build base dataset object
         data = BaseDataset(samples, processor,

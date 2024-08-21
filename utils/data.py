@@ -84,7 +84,7 @@ class BaseDataset(data.Dataset):
                     if not preproc_feats:  # apply processing if not yet performed
                         sample = data_processor(sample)
                     self.data[ID].append([sample])
-
+        self.IDs = np.array(self.IDs)
 
     def __len__(self):
         """
@@ -136,7 +136,7 @@ class TripletDataset(BaseDataset):
         neg : tensor
             Uncorrelated window to represent the negative sample
         """
-        anc_ID, pos_ID, neg_ID = self.triplets[index]
+        anc_ID, pos_ID, neg_ID = self.triplets[index][0], self.triplets[index][1], self.triplets[index][2]
 
         # get windows for anc, pos, neg
         anc = self.data[anc_ID[0]][0]
@@ -172,41 +172,68 @@ class TripletDataset(BaseDataset):
         """
         self.triplets = []
 
+        all_idx = np.arange(len(self.IDs))
+        np.random.shuffle(all_idx)
+
+        pos_IDs = self.IDs[all_idx][:len(all_idx)//2]
+        neg_IDs = self.IDs[all_idx][len(all_idx)//2:]
+        pos_idx = all_idx[:len(all_idx)//2]
+        neg_idx = all_idx[len(all_idx)//2:]
+
         # offline triplet (semi)hard mining
         if fens is not None:
             # use fen to create embeddings for all samples in the dataset
-            with tqdm(total=len(self.IDs)*2+len(self.IDs),
-                      dynamic_ncols=True) as pbar:
-
+            iter_total = len(self.IDs)*2 + len(pos_IDs)*self.window_count
+            with tqdm(total = iter_total, dynamic_ncols = True) as pbar:
                 pbar.set_description('Generating embeddings...')
+
+                window_sample_idx = None
                 inflow_embeds = []
                 outflow_embeds = []
+                valid_windows = []    # use for filtering out empty windows during neg selection
                 for ID in self.IDs:
-                    samples = self.data[ID]
-                    for i,sample in enumerate(samples):
+                    for i,windows in enumerate(self.data[ID]):
                         if i % 2 == 0:   # inflow sample
                             fen = fens[0]
                         else:            # outflow sample
                             fen = fens[1]
-                        sample = pad_sequence(sample, 
+                        windows = pad_sequence(windows, 
                                               batch_first = True, 
                                               padding_value = 0.)
-                        sample = sample.permute(0,2,1).to(fen.get_device())
-                        # hopefully your GPU memory is adequate to fit all windows into memory...
-                        window_embeds = fen(sample).detach().cpu()
+                        windows = windows.permute(0,2,1).to(fen.get_device())
+                        # hopefully your memory is adequate to fit all windows into memory...
+                        window_embeds = fen(windows).detach().cpu()
+                        
+                        # if using ESPRESSO style FEN, sample a limited number of 
+                        # windows to prevent memory explosion
+                        if len(window_embeds.size()) == 3:
+                            if window_sample_idx is None:
+                                # generate vector to randomly select 10 windows from all window idx
+                                window_sample_idx = np.arange(window_embeds.size(1))
+                                np.random.shuffle(window_sample_idx)
+                                window_sample_idx = window_sample_idx[:10]
+                            # slice out selected windows
+                            window_embeds = window_embeds[:,window_sample_idx,:]
+                                
                         if i % 2 == 0:
                             inflow_embeds.append(window_embeds)
                         else:
                             outflow_embeds.append(window_embeds)
+                            # never sample an empty window as the negative
+                            # (guarantees avoidance of both pos and neg windows being empty)
+                            valid_windows.append([len(w) > 0 for w in windows])
                         pbar.update(1)
 
                 pbar.set_description(f'Calculating similarity matrix...')
                 inflow_embeds = torch.stack(inflow_embeds, dim=0)
                 outflow_embeds = torch.stack(outflow_embeds, dim=0)
+                valid_windows = torch.Tensor(valid_windows)[neg_idx].bool()
 
                 # normalize embedding dim
-                inflow_embeds = inflow_embeds / torch.norm(inflow_embeds, p=2, dim=-1, keepdim=True)
-                outflow_embeds = outflow_embeds / torch.norm(outflow_embeds, p=2, dim=-1, keepdim=True)
+                inflow_embeds = inflow_embeds / torch.norm(inflow_embeds, p=2, 
+                                                           dim=-1, keepdim=True)
+                outflow_embeds = outflow_embeds / torch.norm(outflow_embeds, p=2, 
+                                                             dim=-1, keepdim=True)
 
                 # calculate pairwise similarities
                 if len(inflow_embeds.size()) == 3:
@@ -225,25 +252,26 @@ class TripletDataset(BaseDataset):
                 pbar.set_description(f'Finding {mode} triplets...')
                 # identify (semi)hard triplets
                 # select one random negative for every (anc,pos) pair
-                for i,ID in enumerate(self.IDs):
-                    for window_idx in range(all_sim.size(2)):
+                for i,ID in enumerate(pos_IDs):
+                    for window_idx in range(self.window_count):
                         pos_anc_tuple = (ID, window_idx)
 
                         # current window positive sim
-                        pos_sim = all_sim[i,i,window_idx]
+                        pos_sim = all_sim[pos_idx[i],pos_idx[i],window_idx]
                         if len(inflow_embeds.size()) == 4:    
                             # if using espresso-style network, extra dim needs to be reduced
-                            pos_sim = np.amin(pos_sim)  # hardest positive sim
+                            #pos_sim = torch.amin(pos_sim, dim=-1)   # hardest positive sim
+                            pos_sim = torch.mean(pos_sim, dim=-1)   # avg. pos sim
                             
-                        neg_sims = all_sim[i]
+                        neg_sims = all_sim[pos_idx[i]]
+                        neg_sims = neg_sims[neg_idx]  # filter out samples that are used as pos
                         if len(inflow_embeds.size()) == 4:
-                            neg_sims = np.amax(neg_sims, dim=-1)
+                            #neg_sims = torch.amax(neg_sims, dim=-1)    # hardest neg. sim
+                            neg_sims = torch.mean(neg_sims, dim=-1)    # avg. neg sim
                             
-                        if margin > 0: # semi-hard mining
-                            valid_neg_idx = torch.where((neg_sims + margin > pos_sim) & 
-                                                        (neg_sims < pos_sim))
-                        else:  # hard mining
-                            valid_neg_idx = torch.where(neg_sims > pos_sim)
+                        # include hard & semi-hard triplets (not true semi-hard mining)
+                        valid_neg_idx = torch.where((neg_sims + margin > pos_sim) & 
+                                                    valid_windows)
                             
                         if len(valid_neg_idx[0]) > 0:
                             # select random idx
@@ -255,7 +283,7 @@ class TripletDataset(BaseDataset):
                             
                             # add triplet
                             self.triplets.append((pos_anc_tuple, pos_anc_tuple, neg_tuple))
-                    pbar.update(1)
+                        pbar.update(1)
 
         if len(self.triplets) > 0:
             if max_triplets is not None:
@@ -263,18 +291,19 @@ class TripletDataset(BaseDataset):
             return
         # no candidate triplets? randomly sample triplets
 
-        # setup random window triplets with no mining
-        with tqdm(total=len(self.IDs)*self.window_count, 
-                  dynamic_ncols=True) as pbar:
-            pbar.set_description(f'Generating random triplets...')
-            for index in range(len(self.IDs)):
-                ID = self.IDs[index]    # chain ID for anchor & positive
-                for i in range(self.window_count):
-                    neg_ID = None  # pick a random negative ID
-                    while neg_ID != ID:
-                        neg_ID = random.choice(self.IDs)
-                    self.triplets.append(((ID, i), (ID, i), (neg_ID, -1)))
-                    pbar.update(1)
+        # mine random triplets
+        # build numpy vectors 
+        a = np.repeat(self.IDs, self.window_count)
+        b = np.tile(np.arange(self.window_count), len(self.IDs))
+        c = np.copy(a)  # selected neg_idx
+        np.random.shuffle(c)
+        for i in range(len(c)):
+            if c[i] == a[i]:
+                c[i] = c[i] + 1 % len(self.IDs)
+        anc_pos = np.stack((a, b), axis=-1)
+        neg = np.stack((c, np.ones_like(c)*-1), axis=-1)
+        self.triplets = np.stack((anc_pos, anc_pos, neg), axis=1)
+
         if max_triplets is not None:
             self._trim_triplets(max_triplets)
 
@@ -404,20 +433,34 @@ def create_windows(times, features,
     return window_features
 
 
-def load_sample(pth):
+def load_sample_text(pth):
     """Read in a plaintext trace file
     """
     sample = []
     with open(pth, 'r') as fi:
         for line in fi:
             ts, sizedir = line.strip().split('\t')
-            sample.append((float(ts), abs(float(sizedir)), np.sign(int(sizedir))))
-    #return np.array(sample)
+
+            # filter out probable ack-only packets
+            if abs(int(sizedir)) < 100:
+                continue
+
+            # merge packets with same direction at same timestamp
+            if len(sample) > 0 and \
+                    sample[-1][0] == float(ts) and \
+                    sample[-1][2] == np.sign(int(sizedir)):
+                sample[-1][1] += abs(float(sizedir))
+            else:
+                sample.append([float(ts),                   # time
+                                abs(float(sizedir)),        # size
+                                np.sign(int(sizedir))])     # dir
+
     return torch.tensor(sample)
 
 
-def load_dataset(root_dir,
-        sample_list = np.arange(10000)):
+def load_dataset_text(root_dir,
+        sample_list = np.arange(10000),
+        seed = 0):
     """
     Load traffic sliver dataset from files.
 
@@ -437,6 +480,8 @@ def load_dataset(root_dir,
 
     # template of filenames for circuit stream data
     inflow_files = os.listdir(inflow_dir)
+    random.seed(seed)
+    random.shuffle(inflow_files)
 
     # filter based on selected idx
     inflow_files = np.array(inflow_files, dtype=object)[sample_list].tolist()
@@ -447,11 +492,31 @@ def load_dataset(root_dir,
 
         if os.path.exists(outflow_sample_pth):
 
-            inflow_trace = load_sample(inflow_sample_pth)
-            outflow_trace = load_sample(outflow_sample_pth)
+            inflow_trace = load_sample_text(inflow_sample_pth)
+            outflow_trace = load_sample_text(outflow_sample_pth)
 
             samples.append([inflow_trace, outflow_trace])
 
+    return samples
+
+
+def load_dataset_pkl(pkl_file, 
+        batch_list = np.arange(100),
+        seed = 0):
+    """Load data from a pickle file by batches
+    """
+    with open(pkl_file, 'rb') as fi:
+        data = pickle.load(fi)
+        
+    all_batches = list(data.keys())
+    random.seed(seed)
+    random.shuffle(all_batches)
+    
+    samples = []
+    for i in batch_list:
+        for flow_pair in data[all_batches[i]]:
+            samples.append([torch.tensor(s) for s in flow_pair])
+        
     return samples
 
 
@@ -460,8 +525,8 @@ if __name__ == "__main__":
     root = '../data/undefended'
 
     # chain-based sample splitting
-    te_idx = np.arange(0,1000)
-    tr_idx = np.arange(1000,11000)
+    tr_idx = np.arange(0,10000)
+    te_idx = np.arange(10000,15000)
 
     # stream window definitions
     #window_kwargs = {
@@ -478,7 +543,7 @@ if __name__ == "__main__":
     for idx in (te_idx, tr_idx):
 
         # load data from files
-        samples = load_dataset(root, sample_list = idx)
+        samples = load_dataset_text(root, sample_list = idx)
 
         # build base dataset object
         data = BaseDataset(samples, processor,

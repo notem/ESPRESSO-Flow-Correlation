@@ -6,15 +6,27 @@ from timm.layers import to_2tuple
 from functools import partial
 
 
+class IdentityMixer(nn.Module):
+    """
+    """
+    def __init__(self,*args, **kwargs):
+        super().__init__()
+
+    def forward(self, x, *args, **kwargs):
+        return x
+
+
 class ConvMixer(nn.Module):
     """
     """
     def __init__(self, dim, kernel_size, **kwargs):
         super().__init__()
-        self.conv = nn.Conv1d(dim, dim, kernel_size)
+        self.conv = nn.Conv1d(dim, dim, kernel_size, 
+                                padding = "same")
 
     def forward(self, x, **kwargs):
-        return self.conv(x)
+        x = x.permute((0,2,1))
+        return self.conv(x).permute((0,2,1))
 
 
 class MHSAttention(nn.Module):

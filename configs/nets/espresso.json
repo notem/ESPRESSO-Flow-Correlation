@@ -20,6 +20,7 @@
         "use_conv_proj": true,
         "kernel_size": 3,
         "stride": 2,
+        "block_dropout": 0.1,
         "feedforward_style": "mlp",
         "feedforward_ratio": 4,
         "feedforward_drop": 0.0
