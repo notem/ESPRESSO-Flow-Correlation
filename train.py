@@ -32,15 +32,16 @@ torch.backends.cudnn.benchmark = True
 def parse_args():
     parser = argparse.ArgumentParser(
                         prog = 'train.py',
-                        description = 'Train a feature extraction network (FEN) for flow correlation.',
-                        #epilog = 'Text at the bottom of help'
+                        description = 'Train a feature extraction network (FEN) for flow correlation.\
+                            Includes support for training FENs using DeepCoFFEA and ESPRESSO methods.',
+                        epilog = '!! This is research-tier code. YMMV'
                         )
 
     # experiment configuration options
     parser.add_argument('--exp_config',
                         default = './configs/exps/june.json',
                         type = str,
-                        help = "Path to JSON config file containing dataset configuration.", 
+                        help = "Set dataset configuration (as JSON file).", 
                         required = True)
     parser.add_argument('--ckpt_dir',
                         default = './exps/ckpts',
@@ -61,9 +62,6 @@ def parse_args():
                         type = str,
                         help = "Set model config (as JSON file)",
                         required = True)
-    parser.add_argument('--dcf', 
-                        default=False, action='store_true',
-                        help='Use the original DeepCoFFEA model and windowing strategy.')
     parser.add_argument('--input_size', 
                         default = None, 
                         type = int,
@@ -92,7 +90,7 @@ def parse_args():
     parser.add_argument('--decay_step',
                         default = 100,
                         type = int,
-                        help='Learning rate is decayed after this number of epochs.')
+                        help='Learning rate is decayed by x0.7 after this number of epochs.')
 
     return parser.parse_args()
 
@@ -147,6 +145,8 @@ if __name__ == "__main__":
     model_name = model_config['model']
     if args.input_size is not None:
         model_config['input_size'] = args.input_size
+        model_config['inflow_size'] = args.input_size
+        model_config['outflow_size'] = args.input_size
     if args.features is not None:
         model_config['features'] = args.features
     features = model_config['features']

@@ -213,6 +213,6 @@ if __name__ == "__main__":
     te_sims = build_sims(te_inflow_embeds, te_outflow_embeds)
 
     with open(args.dists_file, 'wb') as fi:
-        pickle.dump({'va_sims': va_sims, 
-                    'te_sims': te_sims}, fi)
+        pickle.dump({'va_sims': va_sims.astype(np.float16), 
+                    'te_sims': te_sims.astype(np.float16)}, fi)
 

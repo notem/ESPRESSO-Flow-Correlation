@@ -2,11 +2,23 @@
 
 ### An improved traffic correlation method for end-to-end flow correlation attacks against Tor
 
+![ESPRESSO Receiver operating characteristic (ROC) Curve](./roc.pdf)
+
+Our new ESPRESSO method gains significant performance improvements over DeepCoFFEA, achieving over 90\% TPR when FPR is at most 10^-6. With Online Hard Triplet mining, ESPRESSO also trains and converges faster (~12 hours) than DeepCoFFEA.
+
 This repository has the following features:
-1. Re-implementation of the DeepCoFFEA correlation method for Tor traffic flows.
+1. Re-implementation of the DeepCoFFEA correlation method for Tor traffic flows using PyTorch.
 2. New Online Triplet mining strategies that can be used in place of Offline mining.
 3. New MLP-based correlation prediction that can be used in place of threshold-based window voting.
 4. New ESPRESSO transformer-based feature extraction network (FEN) that does not use pre-processed windows.
+
+Furthermore, this repository's implemenation of DeepCoFFEA differs from the [original](https://github.com/traffic-analysis/deepcoffea) in the following ways:
+1. This repository is written in PyTorch rather than Tensorflow.
+2. The training script applies a learning rate decay of x0.7 every 100 steps (configurable). The AdamW optimizer is used in-place of SGD. Note: the impact of optimizer was not meaningfully explored in this repo.
+3. The data split samples and split sizes likely differ from the splits used in the [paper](https://www.computer.org/csdl/proceedings-article/sp/2022/131600b429/1A4Q4jvFYs0).
+4. A validation data split is used during training and is required for MLP-based and thresholding-based evaluations.
+5. The threshold-based evaluation script applies both local and global thresholds simultaneously. The global threshold used is derived using percentiles of the similarities scores of correlated samples in the validation set.
+5. The threshold-based evaluation script varies local, global, and voting thresholds to generate the ROC curve. Unproductive threshold combinations are dropped.
 
 ### USAGE
 
@@ -14,7 +26,7 @@ This repository has the following features:
 ```
 python train.py --loss_margin 0.1 \
                 --exp_config ./configs/exps/june.json \
-                --net_config ./configs/nets/dcf.json --dcf 
+                --net_config ./configs/nets/dcf.json
 ```
 
 - Train using the ESPRESSO method and FEN
@@ -43,4 +55,6 @@ python benchmark-thr.py --dists_file ./exps/1/dists.pkl \
 python benchmark-mlp.py --dists_file ./exps/1/dists.pkl \
                         --results_file ./exps/1/res.pkl
 ```
+
+We have also provided an `auto.sh` bash script template for automating the process of running experiments.
 

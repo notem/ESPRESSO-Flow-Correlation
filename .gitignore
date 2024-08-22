@@ -1,3 +1,4 @@
 exps/*
 data/*
+!data/README.md
 *__pycache__*

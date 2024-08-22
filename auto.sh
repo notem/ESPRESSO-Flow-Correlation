@@ -1,44 +1,77 @@
 
-MODEL_ARCH=espresso
-#MODEL_ARCH=greentea
-#MODEL_ARCH=hotwater
-#MODEL_ARCH=dcf
-
-EXP_CONFIG=./configs/exps/june.json
-#EXP_CONFIG=./configs/exps/august.json
-#EXP_CONFIG=./configs/exps/obfs4.json
-
+##################
+# Model architecture and dataset configuration
+# !! MODIFY THIS
+#
+MODEL_ARCH=dcf          # dfnet
+MODEL_ARCH=greentea     # espresso w/ conv. mixer
+MODEL_ARCH=hotwater     # espresso w/ no mixer
+MODEL_ARCH=espresso     # espresso w/ mhsa mixer
 ARCH_CONFIG=./configs/nets/${MODEL_ARCH}.json
 
-TRAIN_MODE=online
-EXTRA="--margin 0.5"
-EXTRA="$EXTRA --decay_step 200 --bs 256"
+EXP_CONFIG=./configs/exps/obfs4.json
+EXP_CONFIG=./configs/exps/august.json
+EXP_CONFIG=./configs/exps/june.json
+#
+#########
+
+
+##################
+# setup extra training script args
+# !! MODIFY THIS
+#
+TRAIN_MODE=online           # 'online' or anything else (impacts directory name)
+EXTRA="--margin 0.1"        # setup loss margin arg
+
+# add extra arguments
+#EXTRA="$EXTRA --decay_step 200" 
+#EXTRA="$EXTRA --bs 256" 
+#EXTRA="$EXTRA --epochs 1000" 
+#
+#########################
 
 if [ "$TRAIN_MODE" == "online" ]; then
     EXTRA="$EXTRA --online --hard"
 fi
-if [ "$MODEL_ARCH" == "dcf" ]; then
-    EXTRA="$EXTRA --dcf"
-fi
 
+
+##################
+# subpath to model file (after training)
+# !! MODIFY THIS
+#
+TRAINED_NET=Espresso_20240821-163309  # margin 0.5, online
+CKPT_NAME=e2099.pth
+TRAINED_NET=Espresso_20240821-163510  # margin 0.1, online
+CKPT_NAME=e2049.pth
+#
+##################
+
+
+##################
+#  Script Toggles
+#
+TRAIN=false     # train FEN model w/ triplet learning
+SIMS=false      # generate sim. matrix using FEN
+MLP=true        # eval. using MLP classifier
+THR=true        # eval. using local thresholds
+#
+#################
+
+
+#
 # Directory and file definitions
+#
 EXPNAME=${MODEL_ARCH}_${TRAIN_MODE}
 CKPT_DIR=./exps/$EXPNAME/ckpts
 LOG_DIR=./exps/$EXPNAME/log
-DISTS_FILE=./exps/$EXPNAME/dists.pkl
-RES1_FILE=./exps/$EXPNAME/mlp/res.pkl
-RES2_FILE=./exps/$EXPNAME/thr/res.pkl
-
-# subpath to model file (after training)
-TRAINED_NET=DCF_20240820-223613/e249.pth
-
-TRAIN=true
-SIMS=false
-MLP=false
-THR=false
+DISTS_FILE=./exps/$EXPNAME/sims/${TRAINED_NET}.pkl
+RES1_FILE=./exps/$EXPNAME/mlp/${TRAINED_NET}/metrics.pkl
+RES2_FILE=./exps/$EXPNAME/thr/${TRAINED_NET}/metrics.pkl
 
 
+#
 # train a flow correlation FEN
+#
 if $TRAIN; then
     python train.py \
         --exp_config $EXP_CONFIG \
@@ -47,28 +80,34 @@ if $TRAIN; then
         --log_dir $LOG_DIR $EXTRA
 fi
 
+#
 # create similarity matrix using trained FENs
+#
 if $SIMS; then
     python calc-sims.py \
         --exp_config $EXP_CONFIG \
         --dists_file $DISTS_FILE \
-        --ckpt $CKPT_DIR/$TRAINED_NET
+        --ckpt $CKPT_DIR/$TRAINED_NET/$CKPT_NAME
 fi
 
+#
 # evaluate performance using a trained MLP
+#
 if $MLP; then
     if [ "$MODEL_ARCH" == "dcf" ]; then
         DROP_RATE=0.3
     else
-        DROP_RATE=0.7
+        DROP_RATE=0.8
     fi
     python benchmark-mlp.py \
         --dists_file $DISTS_FILE \
         --results_file $RES1_FILE \
-        --drop $DROP_RATE
+        --dropout $DROP_RATE
 fi
 
+#
 # evaluate performance using local thresholding
+#
 if $THR; then
     python benchmark-thr.py \
         --dists_file $DISTS_FILE \

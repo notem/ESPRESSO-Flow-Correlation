@@ -1,7 +1,7 @@
 {
     "mode": "pickle",
-    "data_path": "./data/dcf-obfs4.pkl",
-    "tr_range": [100, 200],
+    "data_path": "./data/dcf-july.pkl",
+    "tr_range": [100, 700],
     "va_range": [90, 100],
     "te_range": [0, 90]
 }

@@ -1,6 +1,6 @@
 {
     "mode": "pickle",
-    "data_path": "./data/august.pkl",
+    "data_path": "./data/dcf-august.pkl",
     "tr_range": [100, 200],
     "va_range": [90, 100],
     "te_range": [0, 90]

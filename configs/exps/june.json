@@ -1,6 +1,6 @@
 {
     "mode": "pickle",
-    "data_path": "./data/june.pkl",
+    "data_path": "./data/dcf-june.pkl",
     "tr_range": [100, 200],
     "va_range": [90, 100],
     "te_range": [0, 90]

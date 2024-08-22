@@ -58,37 +58,74 @@ class Predictor(nn.Module):
         self.pred = nn.Linear(int(dim*ratio), 1)
         self.dropout = nn.Dropout(drop)
 
-    def forward(self, x):
+    def forward(self, x, T=1):
         x = self.dropout(x)
         for i,module in enumerate(self.fc_modules):
             x = self.dropout(module(x))
-        x = torch.sigmoid(self.pred(x))
+        x = torch.sigmoid(self.pred(x) / T)
         return x
 
+
+def confusion_matrix_vectors(y_true, y_score, thresholds):
+    """
+    Calculate confusion matrix components (TP, TN, FP, FN) for each threshold.
+
+    Parameters:
+    y_true (array-like): True binary labels (0 or 1).
+    y_score (array-like): Target scores, typically probabilities of the positive class.
+    thresholds (array-like): List of thresholds at which to calculate confusion matrix components.
+
+    Returns:
+    np.ndarray: A 2D array of shape (len(thresholds), 4) where each row contains [TP, TN, FP, FN].
+    """
+    # Initialize array to hold confusion matrix components for each threshold
+    confusion_matrices = np.zeros((len(thresholds), 4))
+
+    # Iterate over each threshold
+    for i, thresh in enumerate(thresholds):
+        # Binarize predictions at the current threshold
+        predicted_positive = (y_score >= thresh).astype(int)
+
+        # Calculate confusion matrix components
+        tp = np.sum((predicted_positive == 1) & (y_true == 1))
+        tn = np.sum((predicted_positive == 0) & (y_true == 0))
+        fp = np.sum((predicted_positive == 1) & (y_true == 0))
+        fn = np.sum((predicted_positive == 0) & (y_true == 1))
+
+        # Store the results in the confusion_matrices array
+        confusion_matrices[i] = [tp, tn, fp, fn]
+
+    return confusion_matrices
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-                        #prog = 'WF Benchmark',
-                        #description = 'Train & evaluate WF attack model.',
+                        prog = 'benchmark-mlp.py',
+                        description = 'Evaluate FEN correlation performance using an MLP classifier.',
                         #epilog = 'Text at the bottom of help'
                         )
 
     # experiment configuration options
     parser.add_argument('--dists_file', 
-                        default = '/data/path2', 
+                        default = './path/to/sims.pkl', 
                         type = str,
-                        help = "Path to dataset root 'pathx' directory.", 
+                        help = "Load the pickle filepath containing the pre-calculated similarity matrix.", 
                         required=True)
     parser.add_argument('--results_file', 
                         default = '/data/path2', 
                         type = str,
-                        help = "Path to dataset root 'pathx' directory.", 
+                        help = "Path where to save the results (as a pickle file).", 
                         required=True)
-    parser.add_argument('--drop',
+    parser.add_argument('--dropout',
                         default = 0.5,
                         type=float,
-                        help="Dropout percentage during training.",
+                        help="Dropout percentage during training. \
+                            This dropout rate is applied to all layer (including the input layer).",
+                  )
+    parser.add_argument('--temperature',
+                        default = 4,
+                        type=int,
+                        help="Divisor for temperature scaling of logit.",
                   )
 
     return parser.parse_args()
@@ -106,8 +143,9 @@ if __name__ == "__main__":
         data = pickle.load(fi)
 
     # Create PyTorch datasets
-    tr_dataset = MyDataset(data['va_sims'])
-    te_dataset = MyDataset(data['te_sims'])
+    tr_dataset = MyDataset(data['va_sims'].astype(np.float16))
+    te_dataset = MyDataset(data['te_sims'].astype(np.float16))
+    del data
     
     # Create PyTorch dataloaders
     tr_batch_size = 256
@@ -128,7 +166,7 @@ if __name__ == "__main__":
     
     # Instantiate the model and move it to GPU if available
     model = Predictor(dim=tr_dataset.inputs.shape[-1], 
-                      drop=args.drop)
+                      drop=args.dropout)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model.to(device)
     
@@ -144,8 +182,8 @@ if __name__ == "__main__":
         # Training
         model.train()
         running_loss = 0.0
-        correct_predictions = 0
-        total_predictions = 0
+        correct_pred = 0
+        total_pred = 0
         for inputs, targets in tqdm(tr_loader):
             # Move tensors to the correct device
             inputs, targets = inputs.to(device), targets.to(device)
@@ -154,8 +192,8 @@ if __name__ == "__main__":
             outputs = model(inputs)
             loss = criterion(outputs, targets.unsqueeze(1))
             preds = outputs >= 0.5
-            correct_predictions += (preds == targets.unsqueeze(1)).sum().item()
-            total_predictions += targets.size(0)
+            correct_pred += (preds == targets.unsqueeze(1)).sum().item()
+            total_pred += targets.size(0)
     
             # Backward pass and optimization
             optimizer.zero_grad()
@@ -166,7 +204,7 @@ if __name__ == "__main__":
             running_loss += loss.item()
     
         train_loss = running_loss / len(tr_loader)
-        train_acc = correct_predictions / total_predictions
+        train_acc = correct_pred / total_pred
         print(f'Epoch {epoch+1}/{num_epochs}, Train Loss: {train_loss:.4f}, Train Accuracy: {train_acc:.4f}')
     
     # Put the model in evaluation mode
@@ -178,40 +216,39 @@ if __name__ == "__main__":
     
     # Pass the validation data through the model
     with torch.no_grad():
-        running_loss = 0.0
-        correct_predictions = 0
-        total_predictions = 0
+        correct_pred = 0
+        total_pred = 0
         for inputs, targets in tqdm(te_loader):
             # Move tensors to the correct device
             inputs, targets = inputs.to(device), targets.to(device)
     
             # Forward pass
-            outputs = model(inputs)
+            outputs = model(inputs, T=args.temperature)
     
             # Store the outputs and targets
             outputs_list.extend(outputs.cpu().numpy())
             targets_list.extend(targets.cpu().numpy())
 
             # metrics
-            loss = criterion(outputs, targets.unsqueeze(1))
             preds = outputs >= 0.5
-            correct_predictions += (preds == targets.unsqueeze(1)).sum().item()
-            total_predictions += targets.size(0)
-            running_loss += loss.item()
+            correct_pred += (preds == targets.unsqueeze(1)).sum().item()
+            total_pred += targets.size(0)
 
-        test_loss = running_loss / len(te_loader)
-        test_acc = correct_predictions / total_predictions
-        print(f'Epoch {epoch+1}/{num_epochs}, Test Loss: {test_loss:.4f}, Test Accuracy: {test_acc:.4f}')
+        test_acc = correct_pred / total_pred
     
     # Compute the ROC curve
     fpr, tpr, thresholds = metrics.roc_curve(targets_list, outputs_list,
                                              drop_intermediate=True)
+    cm = confusion_matrix_vectors(targets_list, outputs_list, thresholds)
     roc_auc = metrics.auc(fpr, tpr)
+    print(f"Test accuracy: {test_acc}, roc: {roc_auc}")
 
     # store results
     with open(args.results_file, 'wb') as fi:
         pickle.dump({'fpr': fpr, 
-                     'tpr': tpr}, fi)
+                     'tpr': tpr,
+                     'thresholds': thresholds,
+                     'cm': cm}, fi)
     
     import matplotlib.pyplot as plt
     plt.title(f'Receiver Operating Characteristic')
