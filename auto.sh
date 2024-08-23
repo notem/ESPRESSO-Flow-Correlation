@@ -27,6 +27,7 @@ EXTRA="--margin 0.1"        # setup loss margin arg
 #EXTRA="$EXTRA --decay_step 200" 
 #EXTRA="$EXTRA --bs 256" 
 #EXTRA="$EXTRA --epochs 1000" 
+#EXTRA="$EXTRA --single_fen" 
 #
 #########################
 
@@ -73,7 +74,7 @@ RES2_FILE=./exps/$EXPNAME/thr/${TRAINED_NET}/metrics.pkl
 # train a flow correlation FEN
 #
 if $TRAIN; then
-    python train.py \
+    python src/train.py \
         --exp_config $EXP_CONFIG \
         --net_config $ARCH_CONFIG \
         --ckpt_dir $CKPT_DIR \
@@ -84,7 +85,7 @@ fi
 # create similarity matrix using trained FENs
 #
 if $SIMS; then
-    python calc-sims.py \
+    python src/calc-sims.py \
         --exp_config $EXP_CONFIG \
         --dists_file $DISTS_FILE \
         --ckpt $CKPT_DIR/$TRAINED_NET/$CKPT_NAME
@@ -99,7 +100,7 @@ if $MLP; then
     else
         DROP_RATE=0.8
     fi
-    python benchmark-mlp.py \
+    python src/benchmark-mlp.py \
         --dists_file $DISTS_FILE \
         --results_file $RES1_FILE \
         --dropout $DROP_RATE
@@ -109,7 +110,7 @@ fi
 # evaluate performance using local thresholding
 #
 if $THR; then
-    python benchmark-thr.py \
+    python src/benchmark-thr.py \
         --dists_file $DISTS_FILE \
         --results_file $RES2_FILE
 fi

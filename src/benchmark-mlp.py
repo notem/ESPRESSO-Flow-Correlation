@@ -78,22 +78,17 @@ def confusion_matrix_vectors(y_true, y_score, thresholds):
     Returns:
     np.ndarray: A 2D array of shape (len(thresholds), 4) where each row contains [TP, TN, FP, FN].
     """
-    # Initialize array to hold confusion matrix components for each threshold
-    confusion_matrices = np.zeros((len(thresholds), 4))
+    # Create a matrix of predictions for each threshold
+    predicted_positive = y_score[:, np.newaxis] >= thresholds[np.newaxis, :]
 
-    # Iterate over each threshold
-    for i, thresh in enumerate(thresholds):
-        # Binarize predictions at the current threshold
-        predicted_positive = (y_score >= thresh).astype(int)
+    # Calculate TP, TN, FP, FN for each threshold
+    tp = np.sum(predicted_positive & (y_true[:, np.newaxis] == 1), axis=0)
+    tn = np.sum(~predicted_positive & (y_true[:, np.newaxis] == 0), axis=0)
+    fp = np.sum(predicted_positive & (y_true[:, np.newaxis] == 0), axis=0)
+    fn = np.sum(~predicted_positive & (y_true[:, np.newaxis] == 1), axis=0)
 
-        # Calculate confusion matrix components
-        tp = np.sum((predicted_positive == 1) & (y_true == 1))
-        tn = np.sum((predicted_positive == 0) & (y_true == 0))
-        fp = np.sum((predicted_positive == 1) & (y_true == 0))
-        fn = np.sum((predicted_positive == 0) & (y_true == 1))
-
-        # Store the results in the confusion_matrices array
-        confusion_matrices[i] = [tp, tn, fp, fn]
+    # Stack the results into the final confusion matrix array
+    confusion_matrices = np.stack([tp, tn, fp, fn], axis=1)
 
     return confusion_matrices
 

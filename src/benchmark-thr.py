@@ -12,11 +12,14 @@ import argparse
 import os
 import pickle
 
-# strategically selected Ks for smooth curve
+# Kth closest sim used for local thresholding
 DEFAULT_K = (1,2,4,8,16,32,64,
              128,256,512,
              1024,2048,4096)
-DEFAULT_VOTE_THRS = (0.7, 0.8, 0.9)
+# Required % vote for correlation
+DEFAULT_VOTE_THRS = (0.6, 0.8, 1.0)
+# val. correlated sim percentile used for global thresholding
+DEFAULT_VAL_THRS = (0., 0.15, 0.3)
 
 
 def calc_votes_thr(sims, sorted_idx, k=1):
@@ -116,11 +119,13 @@ def evaluate(sims,
     thresholds = np.array(thresholds)[idx]
 
     # filter out non-useful thresholds
+    cur_max = -np.inf
     if not keep_intermediate:
         keep_idx = []
-        for i in range(1,len(fpr)):
-            if tpr[i] > tpr[i-1]:
+        for i in range(len(fpr)):
+            if tpr[i] > cur_max:
                 keep_idx.append(i)
+                cur_max = tpr[i]
         fpr = fpr[keep_idx]
         tpr = tpr[keep_idx]
         cm = cm[keep_idx]
@@ -184,7 +189,7 @@ if __name__ == "__main__":
     # find min sim threshold using val. set
     min_sims = []
     corr_true = np.eye(va_sims.shape[0], va_sims.shape[1]).astype(bool)
-    for f in (0., 0.1, 0.2):
+    for f in DEFAULT_VAL_THRS:
         min_sims.append(calc_min_sim(va_sims, corr_true, f))
 
     # evaluate performance on test set

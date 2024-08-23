@@ -24,36 +24,36 @@ Furthermore, this repository's implemenation of DeepCoFFEA differs from the [ori
 
 - Train using the original DeepCoFFEA method and FEN
 ```
-python train.py --loss_margin 0.1 \
-                --exp_config ./configs/exps/june.json \
-                --net_config ./configs/nets/dcf.json
+python src/train.py --loss_margin 0.1 \
+                    --exp_config ./configs/exps/june.json \
+                    --net_config ./configs/nets/dcf.json
 ```
 
 - Train using the ESPRESSO method and FEN
 ```
-python train.py --loss_margin 0.5 \
-                --exp_config ./configs/exps/june.json \
-                --net_config ./configs/nets/espresso.json \
-                --online --hard
+python src/train.py --loss_margin 0.5 \
+                    --exp_config ./configs/exps/june.json \
+                    --net_config ./configs/nets/espresso.json \
+                    --online --hard
 ```
 
 - Generate window similarity matrix using a trained FEN
 ```
-python calc-sims.py --dists_file ./exps/1/dists.pkl \
-                    --ckpt ${path/to/ckptfile} \
-                    --exp_config ./configs/exps/june.json
+python src/calc-sims.py --dists_file ./exps/1/dists.pkl \
+                        --ckpt ${path/to/ckptfile} \
+                        --exp_config ./configs/exps/june.json
 ```
 
 - Evaluate correlation efficacy using window voting and local thresholding
 ```
-python benchmark-thr.py --dists_file ./exps/1/dists.pkl \
-                        --results_file ./exps/1/res.pkl
+python src/benchmark-thr.py --dists_file ./exps/1/dists.pkl \
+                            --results_file ./exps/1/res.pkl
 ```
 
 - Evaluate correlation efficacy using MLP predictor
 ```
-python benchmark-mlp.py --dists_file ./exps/1/dists.pkl \
-                        --results_file ./exps/1/res.pkl
+python src/benchmark-mlp.py --dists_file ./exps/1/dists.pkl \
+                            --results_file ./exps/1/res.pkl
 ```
 
 We have also provided an `auto.sh` bash script template for automating the process of running experiments.
