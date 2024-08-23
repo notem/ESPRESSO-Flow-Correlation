@@ -15,17 +15,14 @@ import transformers
 
 class MyDataset(Dataset):
     def __init__(self, sims, ratio=1):
-        indices = [[],[]]
-        for i in range(sims.shape[0]):
-            for j in range(sims.shape[1]):
-                indices[0].append(i)
-                indices[1].append(j)
-        self.indices = np.array(indices)
         self.inputs = sims
         self.targets = np.eye(sims.shape[0], sims.shape[1])
+        self.indices = np.indices(sims.shape[:2]).reshape(2,-1)
 
-        corr_count = np.sum(self.targets)
-        corr_weight = (sims.shape[0] * sims.shape[1]) / corr_count
+        self.tot_pos = np.sum(self.targets)
+        self.tot_neg = np.prod(sims.shape) - self.tot_pos
+        
+        corr_weight = (sims.shape[0] * sims.shape[1]) / self.tot_pos
         corr_weight /= ratio
         self.weights = torch.DoubleTensor([corr_weight if self.targets[self.indices[0][i], self.indices[1][i]] 
                                                     else 1 for i in range(len(self.indices[0]))])
@@ -63,34 +60,7 @@ class Predictor(nn.Module):
         for i,module in enumerate(self.fc_modules):
             x = self.dropout(module(x))
         x = torch.sigmoid(self.pred(x) / T)
-        return x
-
-
-def confusion_matrix_vectors(y_true, y_score, thresholds):
-    """
-    Calculate confusion matrix components (TP, TN, FP, FN) for each threshold.
-
-    Parameters:
-    y_true (array-like): True binary labels (0 or 1).
-    y_score (array-like): Target scores, typically probabilities of the positive class.
-    thresholds (array-like): List of thresholds at which to calculate confusion matrix components.
-
-    Returns:
-    np.ndarray: A 2D array of shape (len(thresholds), 4) where each row contains [TP, TN, FP, FN].
-    """
-    # Create a matrix of predictions for each threshold
-    predicted_positive = y_score[:, np.newaxis] >= thresholds[np.newaxis, :]
-
-    # Calculate TP, TN, FP, FN for each threshold
-    tp = np.sum(predicted_positive & (y_true[:, np.newaxis] == 1), axis=0)
-    tn = np.sum(~predicted_positive & (y_true[:, np.newaxis] == 0), axis=0)
-    fp = np.sum(predicted_positive & (y_true[:, np.newaxis] == 0), axis=0)
-    fn = np.sum(~predicted_positive & (y_true[:, np.newaxis] == 1), axis=0)
-
-    # Stack the results into the final confusion matrix array
-    confusion_matrices = np.stack([tp, tn, fp, fn], axis=1)
-
-    return confusion_matrices
+        return x.flatten()
 
 
 def parse_args():
@@ -144,7 +114,7 @@ if __name__ == "__main__":
     
     # Create PyTorch dataloaders
     tr_batch_size = 256
-    te_batch_size = 2048
+    te_batch_size = 2048*8
     num_epochs = 10
     
     # use weighted sampler to balance training dataset
@@ -167,7 +137,7 @@ if __name__ == "__main__":
     
     # Define the loss function and the optimizer
     criterion = nn.BCELoss()
-    optimizer = optim.AdamW(model.parameters(), lr=1e-3, weight_decay=0.5)
+    optimizer = optim.AdamW(model.parameters(), lr=1e-3, weight_decay=0.1)
     scheduler = transformers.get_linear_schedule_with_warmup(optimizer, 
                                                 len(tr_loader), 
                                                 len(tr_loader)*num_epochs)
@@ -179,28 +149,29 @@ if __name__ == "__main__":
         running_loss = 0.0
         correct_pred = 0
         total_pred = 0
-        for inputs, targets in tqdm(tr_loader):
-            # Move tensors to the correct device
-            inputs, targets = inputs.to(device), targets.to(device)
+        with tqdm(total=len(tr_loader)) as pbar:
+            for i, (inputs, targets) in enumerate(tr_loader):
+                # Move tensors to the correct device
+                inputs, targets = inputs.to(device), targets.to(device)
     
-            # Forward pass
-            outputs = model(inputs)
-            loss = criterion(outputs, targets.unsqueeze(1))
-            preds = outputs >= 0.5
-            correct_pred += (preds == targets.unsqueeze(1)).sum().item()
-            total_pred += targets.size(0)
+                # Forward pass
+                outputs = model(inputs)
+                loss = criterion(outputs, targets)
+                preds = outputs >= 0.5
+                correct_pred += (preds == targets).sum().item()
+                total_pred += targets.size(0)
     
-            # Backward pass and optimization
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            scheduler.step()
+                # Backward pass and optimization
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                scheduler.step()
     
-            running_loss += loss.item()
-    
-        train_loss = running_loss / len(tr_loader)
-        train_acc = correct_pred / total_pred
-        print(f'Epoch {epoch+1}/{num_epochs}, Train Loss: {train_loss:.4f}, Train Accuracy: {train_acc:.4f}')
+                running_loss += loss.item()
+                pbar.set_description(f'Epoch {epoch+1}')
+                pbar.set_postfix({'loss': running_loss / (i+1), 
+                                  'acc': correct_pred / total_pred})
+                pbar.update(1)
     
     # Put the model in evaluation mode
     model.eval()
@@ -213,28 +184,34 @@ if __name__ == "__main__":
     with torch.no_grad():
         correct_pred = 0
         total_pred = 0
-        for inputs, targets in tqdm(te_loader):
-            # Move tensors to the correct device
-            inputs, targets = inputs.to(device), targets.to(device)
+        with tqdm(total=len(te_loader)) as pbar:
+            for i, (inputs, targets) in enumerate(te_loader):
+                # Move tensors to the correct device
+                inputs, targets = inputs.to(device), targets.to(device)
     
-            # Forward pass
-            outputs = model(inputs, T=args.temperature)
+                # Forward pass
+                outputs = model(inputs, T=args.temperature)
     
-            # Store the outputs and targets
-            outputs_list.extend(outputs.cpu().numpy())
-            targets_list.extend(targets.cpu().numpy())
+                # Store the outputs and targets
+                outputs_list.append(outputs.cpu().numpy())
+                targets_list.append(targets.cpu().numpy())
 
-            # metrics
-            preds = outputs >= 0.5
-            correct_pred += (preds == targets.unsqueeze(1)).sum().item()
-            total_pred += targets.size(0)
+                # metrics
+                preds = outputs >= 0.5
+                correct_pred += (preds == targets).sum().item()
+                total_pred += targets.size(0)
+                
+                pbar.set_description(f'Testing...')
+                pbar.set_postfix({'acc': correct_pred / total_pred})
+                pbar.update(1)
 
         test_acc = correct_pred / total_pred
     
     # Compute the ROC curve
+    targets_list = np.concatenate(targets_list)
+    outputs_list = np.concatenate(outputs_list)
     fpr, tpr, thresholds = metrics.roc_curve(targets_list, outputs_list,
                                              drop_intermediate=True)
-    cm = confusion_matrix_vectors(targets_list, outputs_list, thresholds)
     roc_auc = metrics.auc(fpr, tpr)
     print(f"Test accuracy: {test_acc}, roc: {roc_auc}")
 
@@ -243,11 +220,14 @@ if __name__ == "__main__":
         pickle.dump({'fpr': fpr, 
                      'tpr': tpr,
                      'thresholds': thresholds,
-                     'cm': cm}, fi)
+                     'tot_pos': te_dataset.tot_pos,
+                     'tot_neg': te_dataset.tot_neg,
+                     }, fi)
     
     import matplotlib.pyplot as plt
     plt.title(f'Receiver Operating Characteristic')
-    plt.plot(fpr[1:-1], tpr[1:-1], 'b', label = 'AUC = %0.6f' % roc_auc)
+    plt.plot(fpr[1:-1], tpr[1:-1], 
+             'b-', label = 'AUC = %0.6f' % roc_auc)
     plt.legend(loc = 'lower right')
     plt.plot(np.linspace(0, 1, 100000), 
              np.linspace(0, 1, 100000), 

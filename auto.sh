@@ -20,11 +20,13 @@ EXP_CONFIG=./configs/exps/june.json
 # setup extra training script args
 # !! MODIFY THIS
 #
+TRAIN_MODE=offline
 TRAIN_MODE=online           # 'online' or anything else (impacts directory name)
-EXTRA="--margin 0.1"        # setup loss margin arg
+#EXTRA="--margin 0.1"        # setup loss margin arg
+EXTRA="--margin 1.0"        # setup loss margin arg
 
 # add extra arguments
-#EXTRA="$EXTRA --decay_step 200" 
+EXTRA="$EXTRA --decay_step 200" 
 #EXTRA="$EXTRA --bs 256" 
 #EXTRA="$EXTRA --epochs 1000" 
 #EXTRA="$EXTRA --single_fen" 
@@ -40,10 +42,14 @@ fi
 # subpath to model file (after training)
 # !! MODIFY THIS
 #
+TRAINED_NET=DCF_20240821-145032
+CKPT_NAME=e1599.pth
 TRAINED_NET=Espresso_20240821-163309  # margin 0.5, online
 CKPT_NAME=e2099.pth
 TRAINED_NET=Espresso_20240821-163510  # margin 0.1, online
 CKPT_NAME=e2049.pth
+TRAINED_NET=Espresso_20240821-153443  # margin 0.1, offline
+CKPT_NAME=best.pth
 #
 ##################
 
@@ -51,10 +57,10 @@ CKPT_NAME=e2049.pth
 ##################
 #  Script Toggles
 #
-TRAIN=false     # train FEN model w/ triplet learning
+TRAIN=true     # train FEN model w/ triplet learning
 SIMS=false      # generate sim. matrix using FEN
-MLP=true        # eval. using MLP classifier
-THR=true        # eval. using local thresholds
+MLP=false        # eval. using MLP classifier
+THR=false        # eval. using local thresholds
 #
 #################
 

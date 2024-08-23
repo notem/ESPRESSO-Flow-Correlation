@@ -41,11 +41,11 @@ def compute_sim(in_emb, out_emb):
     out_emb = out_emb / norms  # Divide by norms to normalize
     
     # Compute pairwise cosine similarity
-    if in_emb.dim() == 2:
+    if in_emb.dim() == 2:       # DCF-style output
         all_sim = torch.mm(in_emb, out_emb.t())
-    elif in_emb.dim() == 3:
+    elif in_emb.dim() == 3:     # ESPRESSO-style output
         all_sim = torch.matmul(in_emb.permute(1,0,2), out_emb.permute(1,2,0))
-        all_sim = all_sim.mean(0)
+        all_sim = all_sim.mean(0)  # mean across the window dim (otherwise hard-mining performs very poorly)
 
     return all_sim
 
@@ -53,7 +53,10 @@ def compute_sim(in_emb, out_emb):
 class OnlineCosineTripletLoss(nn.Module):
     """
     """
-    def __init__(self, margin = 0.1, semihard = True):
+    def __init__(self, 
+                 margin = 0.1, 
+                 semihard = True, # filter out easy samples 
+                 ):
         super(OnlineCosineTripletLoss, self).__init__()
         self.margin = margin
         self.semihard = semihard
@@ -62,21 +65,11 @@ class OnlineCosineTripletLoss(nn.Module):
         """Return a 3D mask where mask[a, p, n] is True if the triplet (a, p, n) is valid.
 
         A triplet (i, j, k) is valid if:
-            - i, j, k are distinct
             - labels[i] == labels[j] and labels[i] != labels[k]
 
         Args:
             labels: torch.Tensor of dtype torch.int32 with shape [batch_size]
         """
-        # Check that i, j, and k are distinct
-        indices_equal = torch.eye(labels.size(0)).bool().to(labels.device)
-        indices_not_equal = ~indices_equal
-        i_not_equal_j = indices_not_equal.unsqueeze(2)
-        i_not_equal_k = indices_not_equal.unsqueeze(1)
-        j_not_equal_k = indices_not_equal.unsqueeze(0)
-
-        distinct_indices = i_not_equal_j & i_not_equal_k & j_not_equal_k
-
         # Check if labels[i] == labels[j] and labels[i] != labels[k]
         labels = labels.unsqueeze(0)
         label_equal = labels == labels.transpose(0, 1)
@@ -85,10 +78,6 @@ class OnlineCosineTripletLoss(nn.Module):
 
         valid_labels = i_equal_j & (~i_equal_k)
 
-        # Combine the two masks
-        mask = distinct_indices & valid_labels
-
-        #return mask
         return valid_labels
 
     def forward(self, in_embeddings, out_embeddings):

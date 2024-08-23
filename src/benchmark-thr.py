@@ -1,10 +1,5 @@
-import torch
-from torch.utils.data import Dataset, DataLoader
 import numpy as np
 import math
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
 from sklearn import metrics
 from tqdm import tqdm
 
@@ -13,16 +8,25 @@ import os
 import pickle
 
 # Kth closest sim used for local thresholding
-DEFAULT_K = (1,2,4,8,16,32,64,
-             128,256,512,
-             1024,2048,4096)
+DEFAULT_K = (
+    0,1,2,4,8,16,32,
+    64,128,256,384,512,
+    768,1024,2048,4096
+             )
+#DEFAULT_K = []
+
 # Required % vote for correlation
-DEFAULT_VOTE_THRS = (0.6, 0.8, 1.0)
+#DEFAULT_VOTE_THRS = (0.6, 0.8, 1.0)
+DEFAULT_VOTE_THRS = (0.8,)
+
 # val. correlated sim percentile used for global thresholding
-DEFAULT_VAL_THRS = (0., 0.15, 0.3)
+#DEFAULT_VAL_THRS = (0., 0.15, 0.3)
+DEFAULT_VAL_THRS = (0.,)
+
+# Note: multi-threshold callibration will make ROC curve weird and lumpy
 
 
-def calc_votes_thr(sims, sorted_idx, k=1):
+def calc_votes_thr(sims, sorted_idx, k=1):#
     """
     """
     local_thr_idx = sorted_idx[:,k,:]
@@ -66,7 +70,6 @@ def evaluate(sims,
         ks = DEFAULT_K, 
         min_sims = (None,),
         vote_thrs = DEFAULT_VOTE_THRS,
-        keep_intermediate = False,
         ):
     """
     """
@@ -87,12 +90,16 @@ def evaluate(sims,
     # evaluate window sims at various levels of voting, local, and global thresholds
     tot_iter = len(vote_thrs) * len(ks) * len(min_sims)
     with tqdm(total = tot_iter) as pbar:
+        # iterate over voting thresholds
         for vote_thr in vote_thrs:
+            # iterate over local thresholds
             for k in ks:
+                if k > sims.shape[0]: continue
 
                 # using k, construct the matrix of corr votes
                 votes = calc_votes_thr(sims, sorted_idx, k)
 
+                # iterate over global thresholds
                 for min_sim in min_sims:
                     
                     # filter out votes below min (if supplied)
@@ -105,7 +112,6 @@ def evaluate(sims,
 
                     fpr.append((fp / (fp + tn)) if fp+tn > 0 else 0.)
                     tpr.append((tp / (tp + fn)) if tp+fn > 0 else 0.)
-                    cm.append((tp, tn, fp, fn))
                     
                     thresholds.append((vote_thr, k, min_sim))
                     
@@ -115,23 +121,9 @@ def evaluate(sims,
     idx = np.argsort(fpr)
     fpr = np.array(fpr)[idx]
     tpr = np.array(tpr)[idx]
-    cm = np.array(cm)[idx]
     thresholds = np.array(thresholds)[idx]
 
-    # filter out non-useful thresholds
-    cur_max = -np.inf
-    if not keep_intermediate:
-        keep_idx = []
-        for i in range(len(fpr)):
-            if tpr[i] > cur_max:
-                keep_idx.append(i)
-                cur_max = tpr[i]
-        fpr = fpr[keep_idx]
-        tpr = tpr[keep_idx]
-        cm = cm[keep_idx]
-        thresholds = thresholds[keep_idx]
-    
-    return fpr, tpr, cm, thresholds
+    return fpr, tpr, thresholds
 
 
 def parse_args():
@@ -189,29 +181,44 @@ if __name__ == "__main__":
     # find min sim threshold using val. set
     min_sims = []
     corr_true = np.eye(va_sims.shape[0], va_sims.shape[1]).astype(bool)
+    tot_pos = np.sum(corr_true)
+    tot_neg = np.prod(corr_true.shape) - tot_pos
     for f in DEFAULT_VAL_THRS:
         min_sims.append(calc_min_sim(va_sims, corr_true, f))
 
     # evaluate performance on test set
-    fpr, tpr, cm, thresholds = evaluate(te_sims, min_sims=min_sims)
-    tpr = np.concatenate(([0.],tpr,[1.]))
-    fpr = np.concatenate(([0.],fpr,[1.]))
-    acc = (cm[0][0] + cm[0][1]) / sum(cm[0])
-    roc_auc = metrics.auc(fpr, tpr)
-    print(f"Test accuracy: {acc}, roc: {roc_auc}")
+    fpr, tpr, thresholds = evaluate(te_sims, min_sims=min_sims)
 
     # store results
     with open(args.results_file, 'wb') as fi:
         pickle.dump({'fpr': fpr, 
                      'tpr': tpr,
-                     'cm': cm,
-                     'thresholds': thresholds}, fi)
+                     'thresholds': thresholds,
+                     'tot_pos':tot_pos, 
+                     'tot_neg': tot_neg
+                     }, fi)
+        
+    acc = ((tot_pos*tpr[0]) + (tot_neg*(1-fpr[0]))) / np.prod(corr_true.shape)
+    tpr = np.concatenate(([0.], tpr, [1.]))
+    fpr = np.concatenate(([0.], fpr, [1.]))
+    roc_auc = metrics.auc(fpr, tpr)
+    print(f"Test accuracy: {acc}, roc: {roc_auc}")
+    
+    # filter out non-useful thresholds (creates a monotonic ROC)
+    cur_max = -np.inf
+    keep_idx = []
+    for i in range(len(fpr)):
+        if tpr[i] > cur_max:
+            keep_idx.append(i)
+            cur_max = tpr[i]
+    fpr = fpr[keep_idx]
+    tpr = tpr[keep_idx]
     
     # plot ROC curve
     import matplotlib.pyplot as plt
     plt.title(f'Receiver Operating Characteristic')
     plt.plot(fpr[1:-1], tpr[1:-1], 
-             'b', label = 'AUC = %0.6f' % roc_auc)
+             'b-o', label = 'AUC = %0.6f' % roc_auc)
     plt.legend(loc = 'lower right')
     plt.plot(np.linspace(0, 1, 100000), 
              np.linspace(0, 1, 100000), 
