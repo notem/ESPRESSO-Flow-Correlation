@@ -167,7 +167,12 @@ class TripletDataset(BaseDataset):
         if len(self.triplets) > count:
             self.triplets = self.triplets[:count]
 
-    def generate_triplets(self, fens=None, margin=0, max_triplets=None):
+    def generate_triplets(self, 
+                          fens = None, 
+                          margin = 0, 
+                          max_triplets = None, 
+                          gen_count = 1,
+                          on_cpu = False):
         """
         """
         self.triplets = []
@@ -202,16 +207,19 @@ class TripletDataset(BaseDataset):
                                               padding_value = 0.)
                         windows = windows.permute(0,2,1).to(fen.get_device())
                         # hopefully your memory is adequate to fit all windows into memory...
-                        window_embeds = fen(windows).detach().cpu()
+                        window_embeds = fen(windows).detach()
+                        if on_cpu:
+                            # do work on CPU, which probably has more access to memory?
+                            window_embeds = window_embeds.cpu()
                         
                         # if using ESPRESSO style FEN, sample a limited number of 
                         # windows to prevent memory explosion
                         if len(window_embeds.size()) == 3:
                             if window_sample_idx is None:
-                                # generate vector to randomly select 10 windows from all window idx
+                                # generate vector to randomly select 16 windows from all window idx
                                 window_sample_idx = np.arange(window_embeds.size(1))
                                 np.random.shuffle(window_sample_idx)
-                                window_sample_idx = window_sample_idx[:10]
+                                window_sample_idx = window_sample_idx[:16]
                             # slice out selected windows
                             window_embeds = window_embeds[:,window_sample_idx,:]
                                 
@@ -247,6 +255,8 @@ class TripletDataset(BaseDataset):
                     all_sim = torch.matmul(inflow_embeds.permute(1,2,0,3),
                                            outflow_embeds.permute(1,2,3,0))
                     all_sim = all_sim.permute(2,3,0,1)  # (N,sim,1,windows)
+                    
+                all_sim = all_sim.cpu()
 
                 mode = 'hard' if margin <= 0 else 'semi-hard'
                 pbar.set_description(f'Finding {mode} triplets...')
@@ -272,17 +282,19 @@ class TripletDataset(BaseDataset):
                         # include hard & semi-hard triplets (not true semi-hard mining)
                         valid_neg_idx = torch.where((neg_sims + margin > pos_sim) & 
                                                     valid_windows)
-                            
-                        if len(valid_neg_idx[0]) > 0:
-                            # select random idx
-                            j = np.random.randint(0, len(valid_neg_idx[0]))
-                            
-                            # build negative identifier tuple
-                            neg_tuple = (valid_neg_idx[0].numpy(force=True)[j], 
-                                         valid_neg_idx[1].numpy(force=True)[j])
-                            
-                            # add triplet
-                            self.triplets.append((pos_anc_tuple, pos_anc_tuple, neg_tuple))
+                        
+                        # build triplet combinations
+                        candidate_count = len(valid_neg_idx[0])
+                        if candidate_count > 0:
+                            js = np.random.choice(np.arange(candidate_count), 
+                                             size = min(gen_count, candidate_count), 
+                                             replace = False)
+                            for j in js:
+                                # build negative identifier tuple
+                                neg_tuple = (valid_neg_idx[0].numpy(force=True)[j], 
+                                             valid_neg_idx[1].numpy(force=True)[j])
+                                # add triplet
+                                self.triplets.append((pos_anc_tuple, pos_anc_tuple, neg_tuple))
                         pbar.update(1)
 
         if len(self.triplets) > 0:

@@ -9,9 +9,10 @@ import pickle
 
 # Kth closest sim used for local thresholding
 DEFAULT_K = (
-    0,1,2,4,8,16,32,
-    64,128,256,384,512,
-    768,1024,2048,4096
+    0,1,2,4,8,12,16,24,
+    32,64,128,256,384,
+    512,768,1024,2048,
+    3072,4096,5120
              )
 #DEFAULT_K = []
 
@@ -194,7 +195,7 @@ if __name__ == "__main__":
         pickle.dump({'fpr': fpr, 
                      'tpr': tpr,
                      'thresholds': thresholds,
-                     'tot_pos':tot_pos, 
+                     'tot_pos': tot_pos, 
                      'tot_neg': tot_neg
                      }, fi)
         
@@ -217,7 +218,7 @@ if __name__ == "__main__":
     # plot ROC curve
     import matplotlib.pyplot as plt
     plt.title(f'Receiver Operating Characteristic')
-    plt.plot(fpr[1:-1], tpr[1:-1], 
+    plt.plot(fpr[1:], tpr[1:], 
              'b-o', label = 'AUC = %0.6f' % roc_auc)
     plt.legend(loc = 'lower right')
     plt.plot(np.linspace(0, 1, 100000), 

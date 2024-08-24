@@ -43,44 +43,64 @@ class DataProcessor:
                 'sizes': [],
                 'dirs': [], 
                 'time_dirs': [],    # tik-tok style representation
-                'size_dirs': ['cumul', 'dcf'],
+                'size_dirs': ['cumul', 
+                              'dcf'],
 
                 'burst_edges': [],  # a sparse representation that identifies whenever traffic changes direction
 
-                'cumul': ['cumul_norm', 'interval_cumul'],  # per-packet cumulative sum (based on cumul)
+                'cumul': ['cumul_norm', 
+                          'interval_cumul'],  # per-packet cumulative sum (based on cumul)
                 'cumul_norm': [],         # normalize cumul features into [-1,+1] range, centered around the mean
                 'times_norm': [],         # normalize timestamp features into [-1,+1] range, centered around the mean
 
-                'iats': ['iat_dirs', 'interval_iats', 'running_rates', 'dcf'],     # difference between consequtive timestamps (e.g., inter-arrival-times
+                'iats': ['iat_dirs', 
+                         'interval_iats', 
+                         'running_rates', 
+                         'dcf'],     # difference between consequtive timestamps (e.g., inter-arrival-times
                 'iat_dirs': [],           # iats with direction encoded into the representation
 
-                'running_rates': ['running_rates_diff', 'interval_rates'],   # running average of flow rate (ignores direction)
+                'running_rates': ['running_rates_diff', 
+                                  'interval_rates'],   # running average of flow rate (ignores direction)
                 'running_rates_diff': [],                  # instantaneous change of flow rate
-                'running_rates_decayed': ['up_rates_decayed', 'down_rates_decayed'],       # running average with exponential decay on old rates (expensive to compute)
+                'running_rates_decayed': ['up_rates_decayed', 
+                                          'down_rates_decayed'],       # running average with exponential decay on old rates (expensive to compute)
                 'up_rates_decayed': [],       # up-direction only (non-aligned)
                 'down_rates_decayed': [],     # down-direction only (non-aligned)
-
-                'up_iats': ['up_iats_sparse', 'up_rates', 'flow_iats'],         # iats computed on upload-only pkt sequence (is not packet aligned with time/dir seq)
-                'down_iats': ['down_iats_sparse', 'down_rates', 'flow_iats'],   # iats computed on download-only pkt sequence (is not packet aligned with time/dir seq)
+                
+                # iats computed on upload-only pkt sequence (is not packet aligned with time/dir seq)
+                'up_iats': ['up_iats_sparse', 
+                            'up_rates', 
+                            'flow_iats'],         
+                # iats computed on download-only pkt sequence (is not packet aligned with time/dir seq)
+                'down_iats': ['down_iats_sparse', 
+                              'down_rates', 
+                              'flow_iats'],   
                 'up_iats_sparse': [],                  # sparsified sequence (e.g., download pkts have value of zero)
                 'down_iats_sparse': [],                # sparsified sequence (e.g., upload pkts have value of zero)
                 'up_rates': ['up_rates_sparse'],       # simple rate estimator applied to up_iats
                 'down_rates': ['down_rates_sparse'],   # simple rate estimator applied to down_iats
                 'up_rates_sparse': [],        # sparsified, but pck-aligned sequence
                 'down_rates_sparse': [],      # sparsified, but pck-aligned sequence
-
-                'flow_iats': ['burst_filtered_times', 'inv_iat_logs'], # up & down iats merged into one sequence (aligned with time/dir seqs)
+                # up & down iats merged into one sequence (aligned with time/dir seqs)
+                'flow_iats': ['burst_filtered_times', 
+                              'inv_iat_logs'], 
                 'burst_filtered_times': ['burst_filtered_time_dirs'],  # filtered sequence with large gaps removed (non-aligned)
                 'burst_filtered_time_dirs': [],                        # with direction encoded (non-aligned)
-                'inv_iat_logs': ['inv_iat_log_dirs', 'interval_inv_iat_logs'],  # log applied to the inverse of flow iats (adjust with +1 to avoid negative logs)
+                # log applied to the inverse of flow iats (adjust with +1 to avoid negative logs)
+                'inv_iat_logs': ['inv_iat_log_dirs', 
+                                 'interval_inv_iat_logs'],  
                 'inv_iat_log_dirs': [],                  # with pkt direction encoded
 
-                'interval_dirs_up': ['interval_dirs_sum', 'interval_dirs_sub'], 
-                'interval_dirs_down': ['interval_dirs_sum', 'interval_dirs_sub'], 
+                'interval_dirs_up': ['interval_dirs_sum', 
+                                     'interval_dirs_sub'], 
+                'interval_dirs_down': ['interval_dirs_sum', 
+                                       'interval_dirs_sub'], 
                 'interval_dirs_sum': [], 
                 'interval_dirs_sub': [], 
-                'interval_size_up': ['interval_size_sum', 'interval_size_sub'], 
-                'interval_size_down': ['interval_size_sum', 'interval_size_sub'], 
+                'interval_size_up': ['interval_size_sum', 
+                                     'interval_size_sub'], 
+                'interval_size_down': ['interval_size_sum', 
+                                       'interval_size_sub'], 
                 'interval_size_sum': [], 
                 'interval_size_sub': [], 
                 'interval_times': ['interval_times_norm'], 
@@ -230,8 +250,6 @@ class DataProcessor:
         if self._is_enabled('up_rates_decayed'):
             up_rates_decay = weighted_rate_estimator(upload_iats)
             feature_dict['up_rates_decayed'] = up_rates_decay
-            #sparse_up_rate_decay = torch.zeros_like(times)
-            #sparse_up_rate_decay[upload] = up_rates_decay
 
         if self._is_enabled('down_rates'):
             down_rates = rate_estimator(download_iats, sizes[download])

@@ -4,8 +4,8 @@
 # !! MODIFY THIS
 #
 MODEL_ARCH=dcf          # dfnet
-MODEL_ARCH=greentea     # espresso w/ conv. mixer
 MODEL_ARCH=hotwater     # espresso w/ no mixer
+MODEL_ARCH=greentea     # espresso w/ conv. mixer
 MODEL_ARCH=espresso     # espresso w/ mhsa mixer
 ARCH_CONFIG=./configs/nets/${MODEL_ARCH}.json
 
@@ -20,13 +20,15 @@ EXP_CONFIG=./configs/exps/june.json
 # setup extra training script args
 # !! MODIFY THIS
 #
-TRAIN_MODE=offline
 TRAIN_MODE=online           # 'online' or anything else (impacts directory name)
+TRAIN_MODE=offline
 #EXTRA="--margin 0.1"        # setup loss margin arg
-EXTRA="--margin 1.0"        # setup loss margin arg
+EXTRA="--margin 0.5"        # setup loss margin arg
+#EXTRA="--margin 1.0"        # setup loss margin arg
 
 # add extra arguments
-EXTRA="$EXTRA --decay_step 200" 
+#EXTRA="$EXTRA --decay_step 200" 
+EXTRA="$EXTRA --decay_step 50" 
 #EXTRA="$EXTRA --bs 256" 
 #EXTRA="$EXTRA --epochs 1000" 
 #EXTRA="$EXTRA --single_fen" 
@@ -42,14 +44,20 @@ fi
 # subpath to model file (after training)
 # !! MODIFY THIS
 #
-TRAINED_NET=DCF_20240821-145032
+TRAINED_NET=DCF_20240821-145032       # margin 0.1, offline
 CKPT_NAME=e1599.pth
 TRAINED_NET=Espresso_20240821-163309  # margin 0.5, online
 CKPT_NAME=e2099.pth
 TRAINED_NET=Espresso_20240821-163510  # margin 0.1, online
 CKPT_NAME=e2049.pth
+TRAINED_NET=Espresso_20240823-143233  # margin 1.0 online
+CKPT_NAME=e2299.pth
+TRAINED_NET=Espresso_20240823-150648  # hotwater 0.5 online
+CKPT_NAME=e6249.pth
+TRAINED_NET=Espresso_20240823-150609  # greentea 0.5 online
+CKPT_NAME=e4649.pth
 TRAINED_NET=Espresso_20240821-153443  # margin 0.1, offline
-CKPT_NAME=best.pth
+CKPT_NAME=e749.pth
 #
 ##################
 
@@ -104,7 +112,7 @@ if $MLP; then
     if [ "$MODEL_ARCH" == "dcf" ]; then
         DROP_RATE=0.3
     else
-        DROP_RATE=0.8
+        DROP_RATE=0.7
     fi
     python src/benchmark-mlp.py \
         --dists_file $DISTS_FILE \

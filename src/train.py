@@ -413,9 +413,11 @@ if __name__ == "__main__":
             history[epoch] = metrics
 
             if not args.online:  # generate new triplets
+                gen_count = max(1, 33//window_kwargs['window_count']) if window_kwargs is not None else 33
                 tr_data.generate_triplets(
                         fens = (inflow_fen, outflow_fen), 
-                        margin = loss_margin if not args.hard else 0.)
+                        margin = loss_margin if not args.hard else 0.,
+                        gen_count = gen_count)
 
     except KeyboardInterrupt:
         pass

@@ -114,7 +114,7 @@ if __name__ == "__main__":
     
     # Create PyTorch dataloaders
     tr_batch_size = 256
-    te_batch_size = 2048*8
+    te_batch_size = 2048*16
     num_epochs = 10
     
     # use weighted sampler to balance training dataset
@@ -226,7 +226,7 @@ if __name__ == "__main__":
     
     import matplotlib.pyplot as plt
     plt.title(f'Receiver Operating Characteristic')
-    plt.plot(fpr[1:-1], tpr[1:-1], 
+    plt.plot(fpr[1:], tpr[1:], 
              'b-', label = 'AUC = %0.6f' % roc_auc)
     plt.legend(loc = 'lower right')
     plt.plot(np.linspace(0, 1, 100000), 
