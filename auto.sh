@@ -3,9 +3,9 @@
 # Model architecture and dataset configuration
 # !! MODIFY THIS
 #
-MODEL_ARCH=dcf          # dfnet
 MODEL_ARCH=hotwater     # espresso w/ no mixer
 MODEL_ARCH=greentea     # espresso w/ conv. mixer
+MODEL_ARCH=dcf          # dfnet
 MODEL_ARCH=espresso     # espresso w/ mhsa mixer
 ARCH_CONFIG=./configs/nets/${MODEL_ARCH}.json
 
@@ -22,13 +22,13 @@ EXP_CONFIG=./configs/exps/june.json
 #
 TRAIN_MODE=online           # 'online' or anything else (impacts directory name)
 TRAIN_MODE=offline
-#EXTRA="--margin 0.1"        # setup loss margin arg
-EXTRA="--margin 0.5"        # setup loss margin arg
+EXTRA="--margin 0.1"        # setup loss margin arg
+#EXTRA="--margin 0.5"        # setup loss margin arg
 #EXTRA="--margin 1.0"        # setup loss margin arg
 
 # add extra arguments
 #EXTRA="$EXTRA --decay_step 200" 
-EXTRA="$EXTRA --decay_step 50" 
+#EXTRA="$EXTRA --decay_step 50" 
 #EXTRA="$EXTRA --bs 256" 
 #EXTRA="$EXTRA --epochs 1000" 
 #EXTRA="$EXTRA --single_fen" 

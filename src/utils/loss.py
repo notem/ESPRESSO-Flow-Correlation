@@ -27,7 +27,13 @@ class CosineTripletLoss(nn.Module):
         pos_sim = self.sim(anchor, positive)
         neg_sim = self.sim(anchor, negative)
         loss = F.relu(neg_sim - pos_sim + self.margin)
-        return loss.mean()
+        
+        nonzero = torch.count_nonzero(loss)
+        if nonzero > 0:
+            loss = torch.sum(loss) / nonzero
+        else:
+            loss = loss.mean()
+        return loss
 
 
 def compute_sim(in_emb, out_emb):
@@ -53,13 +59,9 @@ def compute_sim(in_emb, out_emb):
 class OnlineCosineTripletLoss(nn.Module):
     """
     """
-    def __init__(self, 
-                 margin = 0.1, 
-                 semihard = True, # filter out easy samples 
-                 ):
+    def __init__(self, margin = 0.1):
         super(OnlineCosineTripletLoss, self).__init__()
         self.margin = margin
-        self.semihard = semihard
 
     def _get_triplet_mask(self, labels):
         """Return a 3D mask where mask[a, p, n] is True if the triplet (a, p, n) is valid.
@@ -99,14 +101,11 @@ class OnlineCosineTripletLoss(nn.Module):
         loss = F.relu(anc_neg_sim - anc_pos_sim + self.margin) * mask
 
         # calculate average loss (disregarding invalid & easy triplets)
-        if self.semihard:
-            nonzero = torch.count_nonzero(loss)
-            if nonzero > 0:
-                loss = torch.sum(loss) / nonzero
-            else:
-                loss = loss.mean() * 0.
+        nonzero = torch.count_nonzero(loss)
+        if nonzero > 0:
+            loss = torch.sum(loss) / nonzero
         else:
-            loss = loss.sum() / mask.sum()
+            loss = loss.mean()
         return loss
 
 
@@ -146,5 +145,5 @@ class OnlineHardCosineTripletLoss(nn.Module):
         if nonzero > 0:
             loss = torch.sum(loss) / nonzero
         else:
-            loss = loss.mean() * 0.
+            loss = loss.mean()
         return loss

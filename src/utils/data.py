@@ -7,7 +7,6 @@ import torch.nn.functional as F
 from tqdm import tqdm
 import os
 import pickle
-import itertools
 import random
 
 from utils.processor import DataProcessor
@@ -177,18 +176,20 @@ class TripletDataset(BaseDataset):
         """
         self.triplets = []
 
+        # shuffle sample IDs
         all_idx = np.arange(len(self.IDs))
         np.random.shuffle(all_idx)
-
-        pos_IDs = self.IDs[all_idx][:len(all_idx)//2]
-        neg_IDs = self.IDs[all_idx][len(all_idx)//2:]
-        pos_idx = all_idx[:len(all_idx)//2]
-        neg_idx = all_idx[len(all_idx)//2:]
+        all_IDs = self.IDs[all_idx]
+        
+        # first-half of shuffled IDs will be used for anc,pos pairs; second-half as neg samples
+        split_point = len(all_idx)//2
+        pos_IDs = all_IDs[:split_point]
+        neg_IDs = all_IDs[split_point:]
 
         # offline triplet (semi)hard mining
         if fens is not None:
             # use fen to create embeddings for all samples in the dataset
-            iter_total = len(self.IDs)*2 + len(pos_IDs)*self.window_count
+            iter_total = len(all_IDs)*2 + split_point*self.window_count
             with tqdm(total = iter_total, dynamic_ncols = True) as pbar:
                 pbar.set_description('Generating embeddings...')
 
@@ -196,7 +197,7 @@ class TripletDataset(BaseDataset):
                 inflow_embeds = []
                 outflow_embeds = []
                 valid_windows = []    # use for filtering out empty windows during neg selection
-                for ID in self.IDs:
+                for ID in all_IDs:
                     for i,windows in enumerate(self.data[ID]):
                         if i % 2 == 0:   # inflow sample
                             fen = fens[0]
@@ -235,7 +236,7 @@ class TripletDataset(BaseDataset):
                 pbar.set_description(f'Calculating similarity matrix...')
                 inflow_embeds = torch.stack(inflow_embeds, dim=0)
                 outflow_embeds = torch.stack(outflow_embeds, dim=0)
-                valid_windows = torch.Tensor(valid_windows)[neg_idx].bool()
+                valid_windows = torch.Tensor(valid_windows)[split_point:].bool()
 
                 # normalize embedding dim
                 inflow_embeds = inflow_embeds / torch.norm(inflow_embeds, p=2, 
@@ -262,26 +263,25 @@ class TripletDataset(BaseDataset):
                 pbar.set_description(f'Finding {mode} triplets...')
                 # identify (semi)hard triplets
                 # select one random negative for every (anc,pos) pair
-                for i,ID in enumerate(pos_IDs):
+                for i,pos_ID in enumerate(pos_IDs):
                     for window_idx in range(self.window_count):
-                        pos_anc_tuple = (ID, window_idx)
+                        pos_anc_tuple = (pos_ID, window_idx)
 
                         # current window positive sim
-                        pos_sim = all_sim[pos_idx[i],pos_idx[i],window_idx]
+                        pos_sim = all_sim[i,i,window_idx]
                         if len(inflow_embeds.size()) == 4:    
                             # if using espresso-style network, extra dim needs to be reduced
                             #pos_sim = torch.amin(pos_sim, dim=-1)   # hardest positive sim
                             pos_sim = torch.mean(pos_sim, dim=-1)   # avg. pos sim
                             
-                        neg_sims = all_sim[pos_idx[i]]
-                        neg_sims = neg_sims[neg_idx]  # filter out samples that are used as pos
+                        # sims for all neg. candidates
+                        neg_sims = all_sim[i,split_point:]
                         if len(inflow_embeds.size()) == 4:
                             #neg_sims = torch.amax(neg_sims, dim=-1)    # hardest neg. sim
                             neg_sims = torch.mean(neg_sims, dim=-1)    # avg. neg sim
                             
                         # include hard & semi-hard triplets (not true semi-hard mining)
-                        valid_neg_idx = torch.where((neg_sims + margin > pos_sim) & 
-                                                    valid_windows)
+                        valid_neg_idx = torch.where((neg_sims + margin > pos_sim) & valid_windows)
                         
                         # build triplet combinations
                         candidate_count = len(valid_neg_idx[0])
@@ -291,8 +291,9 @@ class TripletDataset(BaseDataset):
                                              replace = False)
                             for j in js:
                                 # build negative identifier tuple
-                                neg_tuple = (valid_neg_idx[0].numpy(force=True)[j], 
-                                             valid_neg_idx[1].numpy(force=True)[j])
+                                neg_idx = valid_neg_idx[0].numpy(force=True)[j]
+                                neg_window_idx = valid_neg_idx[1].numpy(force=True)[j]
+                                neg_tuple = (neg_IDs[neg_idx], neg_window_idx)
                                 # add triplet
                                 self.triplets.append((pos_anc_tuple, pos_anc_tuple, neg_tuple))
                         pbar.update(1)
