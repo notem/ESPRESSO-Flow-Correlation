@@ -2,7 +2,7 @@
 
 ### An improved traffic correlation method for end-to-end flow correlation attacks against Tor
 
-![ESPRESSO Receiver operating characteristic (ROC) Curve](./roc.pdf)
+![ESPRESSO Receiver operating characteristic (ROC) Curve](./multi-roc.png)
 
 Our new ESPRESSO method gains significant performance improvements over DeepCoFFEA, achieving over 90\% TPR when FPR is at most 10^-6. With Online Hard Triplet mining, ESPRESSO also trains and converges faster (~12 hours) than DeepCoFFEA.
 
