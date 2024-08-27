@@ -9,19 +9,16 @@ import pickle
 
 # Kth closest sim used for local thresholding
 DEFAULT_K = (
-    0,1,2,4,8,12,16,24,
-    32,64,128,256,384,
-    512,768,1024,2048,
-    3072,4096,5120
-             )
+    0,1,2,4,8,12,16,24,32,
+    48,64,96,128,256,384,
+    512,768,1024,2048,4096
+)
 #DEFAULT_K = []
 
 # Required % vote for correlation
-#DEFAULT_VOTE_THRS = (0.6, 0.8, 1.0)
 DEFAULT_VOTE_THRS = (0.8,)
 
 # val. correlated sim percentile used for global thresholding
-#DEFAULT_VAL_THRS = (0., 0.15, 0.3)
 DEFAULT_VAL_THRS = (0.,)
 
 # Note: multi-threshold callibration will make ROC curve weird and lumpy
@@ -74,7 +71,7 @@ def evaluate(sims,
         ):
     """
     """
-    fpr, tpr, cm = [], [], []
+    fpr, tpr = [], []
     
     # correlated when i=j
     corr_true = np.eye(sims.shape[0], sims.shape[1])
@@ -155,7 +152,6 @@ def parse_args():
 
 
 if __name__ == "__main__":
-
     args = parse_args()
 
     # create dir path to results file if necessary

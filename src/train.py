@@ -69,6 +69,9 @@ def parse_args():
     parser.add_argument('--features', 
                         default=None, type=str, nargs="+",
                         help='Overwrite the features used in the config file. Multiple features can be provided.')
+    parser.add_argument('--wd', 
+                        default=1e-2, type=float,
+                        help='Magnitude of weight decay.')
     parser.add_argument('--bs', 
                         default=128, type=int,
                         help='Size of batches.')
@@ -87,6 +90,9 @@ def parse_args():
     parser.add_argument('--single_fen', 
                         default=False, action='store_true',
                         help='Use the same FEN for in and out flows.')
+    parser.add_argument('--softer_loss', 
+                        default=False, action='store_true',
+                        help='Include zero-loss samples when taking average batch loss.')
     parser.add_argument('--decay_step',
                         default = 100,
                         type = int,
@@ -119,17 +125,28 @@ if __name__ == "__main__":
     # finetune config
     # # # # # #
     batch_size      = args.bs
-    ckpt_period     = 50
+    ckpt_period     = min(50, args.decay_step / 2)
     epochs          = args.epochs
     save_best_epoch = True
     opt_lr          = 1e-3
     opt_betas       = (0.9, 0.999)
-    opt_wd          = 1e-3
+    opt_wd          = args.wd
     steplr_step     = args.decay_step
     steplr_gamma    = 0.7
     loss_margin     = args.margin
     use_same_fen    = args.single_fen
+    semihard_loss   = not args.softer_loss
     # # # # # #
+    train_params = {
+        'batch_size': batch_size,
+        'opt_lr': opt_lr,
+        'opt_betas': opt_betas,
+        'opt_wd': opt_wd,
+        'steplr_step': steplr_step,
+        'steplr_gamma': steplr_gamma,
+        'loss_margin': loss_margin,
+        'semihard_loss': semihard_loss
+    }
 
     # all trainable network parameters
     params = []
@@ -287,10 +304,13 @@ if __name__ == "__main__":
         os.makedirs(log_dir)
 
     if args.online:
-        all_criterion = OnlineCosineTripletLoss(margin=loss_margin)
-        hard_criterion = OnlineHardCosineTripletLoss(margin=loss_margin)
+        all_criterion = OnlineCosineTripletLoss(margin = loss_margin, 
+                                                semihard = semihard_loss)
+        hard_criterion = OnlineHardCosineTripletLoss(margin = loss_margin, 
+                                                     semihard = semihard_loss)
     else:
-        criterion = CosineTripletLoss(margin=loss_margin)
+        criterion = CosineTripletLoss(margin = loss_margin, 
+                                      semihard = semihard_loss)
 
     def epoch_iter(dataloader, 
                    eval_only=False, 
@@ -395,6 +415,7 @@ if __name__ == "__main__":
                                 "outflow_fen": outflow_fen.state_dict(),
                                 "opt": optimizer.state_dict(),
                                 "config": model_config,
+                                "train_config": train_params,
                         }, checkpoint_path_epoch)
 
             if save_best_epoch:
@@ -408,12 +429,14 @@ if __name__ == "__main__":
                                     "outflow_fen": outflow_fen.state_dict(),
                                     "opt": optimizer.state_dict(),
                                     "config": model_config,
+                                    "train_config": train_params,
                             }, checkpoint_path_epoch)
 
             history[epoch] = metrics
 
             if not args.online:  # generate new triplets
-                gen_count = max(1, 33//window_kwargs['window_count']) if window_kwargs is not None else 33
+                gen_count = max(1, 33//window_kwargs['window_count']) \
+                                if window_kwargs is not None else 33
                 tr_data.generate_triplets(
                         fens = (inflow_fen, outflow_fen), 
                         margin = loss_margin if not args.hard else 0.,

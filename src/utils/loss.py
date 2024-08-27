@@ -4,24 +4,14 @@ import torch.nn.functional as F
 from torch import Tensor
 
 
-
-class TripletLoss(nn.Module):
-    def __init__(self, margin=1.0):
-        super(TripletLoss, self).__init__()
-        self.margin = margin
-
-    def forward(self, anchor, positive, negative):
-        pos_dist = F.pairwise_distance(anchor, positive)
-        neg_dist = F.pairwise_distance(anchor, negative)
-        loss = F.relu(pos_dist - neg_dist + self.margin)
-        return loss.mean()
-
-
 class CosineTripletLoss(nn.Module):
-    def __init__(self, margin=0.1):
+    def __init__(self, 
+                 margin=0.1, 
+                 semihard=True):
         super(CosineTripletLoss, self).__init__()
         self.margin = margin
         self.sim = nn.CosineSimilarity(dim=-1)
+        self.semihard = semihard
 
     def forward(self, anchor, positive, negative):
         pos_sim = self.sim(anchor, positive)
@@ -29,7 +19,7 @@ class CosineTripletLoss(nn.Module):
         loss = F.relu(neg_sim - pos_sim + self.margin)
         
         nonzero = torch.count_nonzero(loss)
-        if nonzero > 0:
+        if self.semihard and nonzero > 0:
             loss = torch.sum(loss) / nonzero
         else:
             loss = loss.mean()
@@ -59,9 +49,11 @@ def compute_sim(in_emb, out_emb):
 class OnlineCosineTripletLoss(nn.Module):
     """
     """
-    def __init__(self, margin = 0.1):
+    def __init__(self, margin = 0.1,
+                 semihard = True):
         super(OnlineCosineTripletLoss, self).__init__()
         self.margin = margin
+        self.semihard = semihard
 
     def _get_triplet_mask(self, labels):
         """Return a 3D mask where mask[a, p, n] is True if the triplet (a, p, n) is valid.
@@ -102,7 +94,7 @@ class OnlineCosineTripletLoss(nn.Module):
 
         # calculate average loss (disregarding invalid & easy triplets)
         nonzero = torch.count_nonzero(loss)
-        if nonzero > 0:
+        if self.semihard and nonzero > 0:
             loss = torch.sum(loss) / nonzero
         else:
             loss = loss.mean()
@@ -112,9 +104,10 @@ class OnlineCosineTripletLoss(nn.Module):
 class OnlineHardCosineTripletLoss(nn.Module):
     """
     """
-    def __init__(self, margin=0.1):
+    def __init__(self, margin=0.1, semihard=True):
         super(OnlineHardCosineTripletLoss, self).__init__()
         self.margin = margin
+        self.semihard = semihard
 
     def forward(self, in_embeddings, out_embeddings):
         """
@@ -142,7 +135,7 @@ class OnlineHardCosineTripletLoss(nn.Module):
 
         # calculate average loss (disregarding invalid & easy triplets)
         nonzero = torch.count_nonzero(loss)
-        if nonzero > 0:
+        if self.semihard and nonzero > 0:
             loss = torch.sum(loss) / nonzero
         else:
             loss = loss.mean()

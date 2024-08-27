@@ -20,23 +20,26 @@ EXP_CONFIG=./configs/exps/june.json
 # setup extra training script args
 # !! MODIFY THIS
 #
-TRAIN_MODE=online           # 'online' or anything else (impacts directory name)
 TRAIN_MODE=offline
+TRAIN_MODE=online           # 'online' or anything else (impacts directory name)
 EXTRA="--margin 0.1"        # setup loss margin arg
 #EXTRA="--margin 0.5"        # setup loss margin arg
 #EXTRA="--margin 1.0"        # setup loss margin arg
 
 # add extra arguments
 #EXTRA="$EXTRA --decay_step 200" 
-#EXTRA="$EXTRA --decay_step 50" 
+#EXTRA="$EXTRA --decay_step 20" 
 #EXTRA="$EXTRA --bs 256" 
-#EXTRA="$EXTRA --epochs 1000" 
+#EXTRA="$EXTRA --wd 0.02" 
+#EXTRA="$EXTRA --epochs 700" 
+#EXTRA="$EXTRA --softer_loss" 
 #EXTRA="$EXTRA --single_fen" 
 #
 #########################
 
 if [ "$TRAIN_MODE" == "online" ]; then
-    EXTRA="$EXTRA --online --hard"
+    #EXTRA="$EXTRA --online --hard"
+    EXTRA="$EXTRA --online"
 fi
 
 
@@ -44,20 +47,32 @@ fi
 # subpath to model file (after training)
 # !! MODIFY THIS
 #
-TRAINED_NET=DCF_20240821-145032       # margin 0.1, offline
+TRAINED_NET=DCF_20240821-145032       # espresso 0.1, offline
 CKPT_NAME=e1599.pth
-TRAINED_NET=Espresso_20240821-163309  # margin 0.5, online
+TRAINED_NET=Espresso_20240821-163309  # espresso 0.5, online
 CKPT_NAME=e2099.pth
-TRAINED_NET=Espresso_20240821-163510  # margin 0.1, online
+TRAINED_NET=Espresso_20240821-163510  # espresso 0.1, online
 CKPT_NAME=e2049.pth
-TRAINED_NET=Espresso_20240823-143233  # margin 1.0 online
+TRAINED_NET=Espresso_20240823-143233  # espresso 1.0 online
 CKPT_NAME=e2299.pth
 TRAINED_NET=Espresso_20240823-150648  # hotwater 0.5 online
 CKPT_NAME=e6249.pth
+TRAINED_NET=Espresso_20240821-153443  # espresso 0.1, offline
+CKPT_NAME=e749.pth
+TRAINED_NET=DCF_20240824-143311  # dcf 0.5, offline
+CKPT_NAME=e549.pth
+TRAINED_NET=DCF_20240824-143824  # dcf 0.1, offline
+CKPT_NAME=e649.pth
+TRAINED_NET=Espresso_20240824-172214  # espresso 0.1 offline
+CKPT_NAME=e149.pth
+TRAINED_NET=Espresso_20240824-171832  # espresso 0.5 offline
+CKPT_NAME=e199.pth
 TRAINED_NET=Espresso_20240823-150609  # greentea 0.5 online
 CKPT_NAME=e4649.pth
-TRAINED_NET=Espresso_20240821-153443  # margin 0.1, offline
-CKPT_NAME=e749.pth
+TRAINED_NET=DCF_20240825-233010     # DCF 0.1 offline
+CKPT_NAME=e699.pth
+TRAINED_NET=Espresso_20240826-002810  # Espresso 0.5 online
+CKPT_NAME=e4049.pth
 #
 ##################
 
@@ -110,9 +125,9 @@ fi
 #
 if $MLP; then
     if [ "$MODEL_ARCH" == "dcf" ]; then
-        DROP_RATE=0.3
+        DROP_RATE=0.4
     else
-        DROP_RATE=0.7
+        DROP_RATE=0.8
     fi
     python src/benchmark-mlp.py \
         --dists_file $DISTS_FILE \

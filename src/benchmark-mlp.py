@@ -12,6 +12,16 @@ import os
 import pickle
 import transformers
 
+# enable if NaN or other odd behavior appears
+#torch.autograd.set_detect_anomaly(True)
+# disable any unnecessary logging / debugging
+torch.autograd.set_detect_anomaly(False)
+torch.autograd.profiler.profile(False)
+torch.autograd.profiler.emit_nvtx(False)
+
+# auto-optimize cudnn ops
+torch.backends.cudnn.benchmark = True
+
 
 class MyDataset(Dataset):
     def __init__(self, sims, ratio=1):
@@ -40,26 +50,33 @@ class Predictor(nn.Module):
     """
     Simple MLP for binary prediction
     """
-    def __init__(self, dim, drop=0.5, ratio=2, layers=3):
+    def __init__(self, dim, 
+                 drop=0.5, 
+                 #ratio=4, 
+                 layers=3):
         super(Predictor, self).__init__()
         modules = []
+        #hid_dim = int(dim*ratio)
+        hid_dim = 32
         for i in range(layers):
             fc = nn.Sequential(
-                    nn.Linear(dim, int(dim*ratio)) if i == 0 else nn.Linear(int(dim*ratio), int(dim*ratio)),
+                    nn.Linear(dim, hid_dim) if i == 0 else nn.Linear(hid_dim, hid_dim),
                     nn.GELU(),
-                    #nn.BatchNorm1d(dim*ratio),
+                    #nn.BatchNorm1d(hid_dim),
                     )
             modules.append(fc)
 
         self.fc_modules = nn.ModuleList(modules)
-        self.pred = nn.Linear(int(dim*ratio), 1)
+        self.pred = nn.Linear(hid_dim, 1)
         self.dropout = nn.Dropout(drop)
+        self.mlp_dropout = nn.Dropout(0.5)
 
-    def forward(self, x, T=1):
+    def forward(self, x):
         x = self.dropout(x)
         for i,module in enumerate(self.fc_modules):
-            x = self.dropout(module(x))
-        x = torch.sigmoid(self.pred(x) / T)
+            x = module(x)
+            x = self.mlp_dropout(x)
+        x = self.pred(x)
         return x.flatten()
 
 
@@ -87,11 +104,6 @@ def parse_args():
                         help="Dropout percentage during training. \
                             This dropout rate is applied to all layer (including the input layer).",
                   )
-    parser.add_argument('--temperature',
-                        default = 4,
-                        type=int,
-                        help="Divisor for temperature scaling of logit.",
-                  )
 
     return parser.parse_args()
 
@@ -108,14 +120,16 @@ if __name__ == "__main__":
         data = pickle.load(fi)
 
     # Create PyTorch datasets
-    tr_dataset = MyDataset(data['va_sims'].astype(np.float16))
-    te_dataset = MyDataset(data['te_sims'].astype(np.float16))
+    va_sims = data['va_sims'].astype(np.float16)
+    te_sims = data['te_sims'].astype(np.float16)
+    tr_dataset = MyDataset(va_sims)
+    te_dataset = MyDataset(te_sims)
     del data
     
     # Create PyTorch dataloaders
     tr_batch_size = 256
     te_batch_size = 2048*16
-    num_epochs = 10
+    num_epochs = 20
     
     # use weighted sampler to balance training dataset
     tr_sampler = WeightedRandomSampler(tr_dataset.weights, len(tr_dataset.weights))
@@ -130,14 +144,14 @@ if __name__ == "__main__":
             shuffle = False)
     
     # Instantiate the model and move it to GPU if available
-    model = Predictor(dim=tr_dataset.inputs.shape[-1], 
-                      drop=args.dropout)
+    model = Predictor(dim = tr_dataset.inputs.shape[-1], 
+                      drop = args.dropout)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model.to(device)
     
     # Define the loss function and the optimizer
-    criterion = nn.BCELoss()
-    optimizer = optim.AdamW(model.parameters(), lr=1e-3, weight_decay=0.1)
+    criterion = nn.BCEWithLogitsLoss()
+    optimizer = optim.AdamW(model.parameters(), lr=1e-3, weight_decay=0.2)
     scheduler = transformers.get_linear_schedule_with_warmup(optimizer, 
                                                 len(tr_loader), 
                                                 len(tr_loader)*num_epochs)
@@ -157,8 +171,8 @@ if __name__ == "__main__":
                 # Forward pass
                 outputs = model(inputs)
                 loss = criterion(outputs, targets)
-                preds = outputs >= 0.5
-                correct_pred += (preds == targets).sum().item()
+                logits = torch.sigmoid(outputs) >= 0.5
+                correct_pred += (logits == targets).sum().item()
                 total_pred += targets.size(0)
     
                 # Backward pass and optimization
@@ -172,7 +186,7 @@ if __name__ == "__main__":
                 pbar.set_postfix({'loss': running_loss / (i+1), 
                                   'acc': correct_pred / total_pred})
                 pbar.update(1)
-    
+                
     # Put the model in evaluation mode
     model.eval()
     
@@ -190,15 +204,15 @@ if __name__ == "__main__":
                 inputs, targets = inputs.to(device), targets.to(device)
     
                 # Forward pass
-                outputs = model(inputs, T=args.temperature)
+                outputs = torch.sigmoid(model(inputs) / 3) 
     
                 # Store the outputs and targets
                 outputs_list.append(outputs.cpu().numpy())
                 targets_list.append(targets.cpu().numpy())
 
                 # metrics
-                preds = outputs >= 0.5
-                correct_pred += (preds == targets).sum().item()
+                logits = outputs >= 0.5
+                correct_pred += (logits == targets).sum().item()
                 total_pred += targets.size(0)
                 
                 pbar.set_description(f'Testing...')
