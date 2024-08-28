@@ -19,7 +19,8 @@ DEFAULT_K = (
 DEFAULT_VOTE_THRS = (0.8,)
 
 # val. correlated sim percentile used for global thresholding
-DEFAULT_VAL_THRS = (0.,)
+#DEFAULT_VAL_THRS = (0.,)
+DEFAULT_VAL_THRS = []
 
 # Note: multi-threshold callibration will make ROC curve weird and lumpy
 
@@ -182,6 +183,8 @@ if __name__ == "__main__":
     tot_neg = np.prod(corr_true.shape) - tot_pos
     for f in DEFAULT_VAL_THRS:
         min_sims.append(calc_min_sim(va_sims, corr_true, f))
+    if len(min_sims) == 0:
+        min_sims.append(None)
 
     # evaluate performance on test set
     fpr, tpr, thresholds = evaluate(te_sims, min_sims=min_sims)

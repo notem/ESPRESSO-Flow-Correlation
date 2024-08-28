@@ -97,7 +97,7 @@ class OnlineCosineTripletLoss(nn.Module):
         if self.semihard and nonzero > 0:
             loss = torch.sum(loss) / nonzero
         else:
-            loss = loss.mean()
+            loss = torch.sum(loss) / torch.sum(mask)
         return loss
 
 

@@ -150,6 +150,8 @@ class DataProcessor:
         """
         device = "cuda" if torch.cuda.is_available() else "cpu"
         x = x.to(device)
+        if x.size(0) <= 0:
+            return torch.empty((0,self.input_channels))
         
         def fix_size(z, size):
             if z.size(0) < size:

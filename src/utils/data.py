@@ -67,17 +67,18 @@ class BaseDataset(data.Dataset):
 
                 # split the circuit data into windows if window_kwargs have been provided
                 if window_kwargs is not None:
-                    times = times_processor(sample)   # pkt times
-                    windows = create_windows(times, sample, **window_kwargs)  # windowed stream
+                    if len(sample) > 0:
+                        times = times_processor(sample)   # pkt times
+                        windows = create_windows(times, sample, **window_kwargs)  # windowed stream
 
-                    if not preproc_feats:  # apply processing if not yet performed
-                        # create multi-channel feature representation of windows independently
-                        for i in range(len(windows)):
-                            if len(windows[i]) <= 0:
-                                windows[i] = torch.empty((0,data_processor.input_channels))
-                            else:
+                        if not preproc_feats:  # apply processing if not yet performed
+                            # create multi-channel feature representation of windows independently
+                            for i in range(len(windows)):
                                 windows[i] = data_processor(windows[i])
-                    self.data[ID].append(windows)
+                        self.data[ID].append(windows)
+                    else:
+                        self.data[ID].append([torch.empty((0,data_processor.input_channels)) 
+                                              for _ in range(len(windows))])
 
                 else:  # no windowing
                     if not preproc_feats:  # apply processing if not yet performed
@@ -139,8 +140,8 @@ class TripletDataset(BaseDataset):
 
         # get windows for anc, pos, neg
         anc = self.data[anc_ID[0]][0]
-        pos = self.data[pos_ID[0]][1]
-        neg = self.data[neg_ID[0]][1]
+        pos = self.data[pos_ID[0]][-1]
+        neg = self.data[neg_ID[0]][-1]
 
         # randomly select a window for the triplet (skipping empty windows in anchor)
         if anc_ID[1] < 0:
@@ -198,11 +199,16 @@ class TripletDataset(BaseDataset):
                 outflow_embeds = []
                 valid_windows = []    # use for filtering out empty windows during neg selection
                 for ID in all_IDs:
-                    for i,windows in enumerate(self.data[ID]):
-                        if i % 2 == 0:   # inflow sample
-                            fen = fens[0]
-                        else:            # outflow sample
+                    samples = self.data[ID]
+                    if len(samples) > 2:
+                        outflow_sample = samples[-1]
+                        inflow_sample = samples[np.random.randint(len(samples)-1)]
+                        samples = [inflow_sample, outflow_sample]
+                    for i,windows in enumerate(samples):
+                        if i == len(samples)-1:   # outflow sample
                             fen = fens[1]
+                        else:            # inflow sample
+                            fen = fens[0]
                         windows = pad_sequence(windows, 
                                               batch_first = True, 
                                               padding_value = 0.)
@@ -224,16 +230,17 @@ class TripletDataset(BaseDataset):
                             # slice out selected windows
                             window_embeds = window_embeds[:,window_sample_idx,:]
                                 
-                        if i % 2 == 0:
-                            inflow_embeds.append(window_embeds)
-                        else:
+                        if i == len(samples)-1:
                             outflow_embeds.append(window_embeds)
                             # never sample an empty window as the negative
                             # (guarantees avoidance of both pos and neg windows being empty)
                             valid_windows.append([len(w) > 0 for w in windows])
+                        else:
+                            inflow_embeds.append(window_embeds)
                         pbar.update(1)
 
                 pbar.set_description(f'Calculating similarity matrix...')
+                ratio = int(len(inflow_embeds) / len(outflow_embeds))
                 inflow_embeds = torch.stack(inflow_embeds, dim=0)
                 outflow_embeds = torch.stack(outflow_embeds, dim=0)
                 valid_windows = torch.Tensor(valid_windows)[split_point:].bool()
@@ -268,7 +275,7 @@ class TripletDataset(BaseDataset):
                         pos_anc_tuple = (pos_ID, window_idx)
 
                         # current window positive sim
-                        pos_sim = all_sim[i,i,window_idx]
+                        pos_sim = all_sim[i,i//ratio,window_idx]
                         if len(inflow_embeds.size()) == 4:    
                             # if using espresso-style network, extra dim needs to be reduced
                             #pos_sim = torch.amin(pos_sim, dim=-1)   # hardest positive sim
@@ -367,7 +374,13 @@ class OnlineDataset(BaseDataset):
         """
         """
         ID = self.IDs[index]
-        return self.data[ID]
+        samples = self.data[ID]
+        if len(samples) == 2:
+            return samples
+        else:
+            outflow_sample = samples[-1]
+            inflow_sample = samples[np.random.randint(len(samples)-1)]
+            return [inflow_sample, outflow_sample]
 
     @staticmethod
     def batchify(batch):
@@ -378,7 +391,7 @@ class OnlineDataset(BaseDataset):
         batch_x_outflow = []
         for i in range(len(batch)):
             batch_x_inflow.append(batch[i][0])
-            batch_x_outflow.append(batch[i][1])
+            batch_x_outflow.append(batch[i][-1])
 
         # pick a random window to return
         window_count = len(batch_x_inflow[0])

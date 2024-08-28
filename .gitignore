@@ -1,4 +1,5 @@
 exps/*
 data/*
 !data/README.md
+!data/ts-sim.py
 *__pycache__*

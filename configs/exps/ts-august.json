@@ -1,0 +1,7 @@
+{
+    "mode": "pickle",
+    "data_path": "./data/ts2-august.pkl",
+    "tr_range": [100, 200],
+    "va_range": [90, 100],
+    "te_range": [0, 90]
+}

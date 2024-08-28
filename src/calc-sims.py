@@ -181,7 +181,7 @@ if __name__ == "__main__":
             embeds = in_fen(proc(windows)).squeeze().detach().cpu()
             inflow_embeds.append(embeds)
             # outflow
-            windows = data.data[ID][1]
+            windows = data.data[ID][-1]
             embeds = out_fen(proc(windows)).squeeze().detach().cpu()
             outflow_embeds.append(embeds)
         return inflow_embeds, outflow_embeds
