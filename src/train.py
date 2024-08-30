@@ -47,6 +47,10 @@ def parse_args():
                         default = './exps/ckpts',
                         type = str,
                         help = "Set directory for model checkpoints.")
+    parser.add_argument('--ckpt_name',
+                        default=None,
+                        type = str,
+                        help = "Set the name used for the checkpoint directory.")
     parser.add_argument('--log_dir', 
                         default = './exps/logs',
                         type = str,
@@ -109,8 +113,8 @@ if __name__ == "__main__":
     args = parse_args()
 
     # load checkpoint (if it exists)
+    checkpoint_fname = args.ckpt_name
     checkpoint_path = args.resume
-    checkpoint_fname = None
     resumed = None
     if checkpoint_path and os.path.exists(checkpoint_path):
         print("Resuming from checkpoint...")
@@ -127,7 +131,6 @@ if __name__ == "__main__":
     batch_size      = args.bs
     ckpt_period     = min(50, args.decay_step / 2)
     epochs          = args.epochs
-    save_best_epoch = True
     opt_lr          = 1e-3
     opt_betas       = (0.9, 0.999)
     opt_wd          = args.wd
@@ -418,20 +421,6 @@ if __name__ == "__main__":
                                 "train_config": train_params,
                         }, checkpoint_path_epoch)
 
-            if save_best_epoch:
-                best_val_loss = min([999]+[metrics['va_loss'] for metrics in history.values()])
-                if metrics['va_loss'] < best_val_loss:
-                    checkpoint_path_epoch = f"{checkpoint_dir}/{checkpoint_fname}/best.pth"
-                    print(f"Saving new best model to {checkpoint_path_epoch}...")
-                    torch.save({
-                                    "epoch": epoch,
-                                    "inflow_fen": inflow_fen.state_dict(),
-                                    "outflow_fen": outflow_fen.state_dict(),
-                                    "opt": optimizer.state_dict(),
-                                    "config": model_config,
-                                    "train_config": train_params,
-                            }, checkpoint_path_epoch)
-
             history[epoch] = metrics
 
             if not args.online:  # generate new triplets
@@ -448,7 +437,21 @@ if __name__ == "__main__":
     finally:
         if not os.path.exists(log_dir):
             os.makedirs(log_dir)
+            
+        # save epoch performance history
         results_fp = f'{log_dir}/{checkpoint_fname}.txt'
         with open(results_fp, 'w') as fi:
             json.dump(history, fi, indent='\t')
-
+        
+        # save a final checkpoint
+        checkpoint_path_epoch = f"{checkpoint_dir}/{checkpoint_fname}/final.pth"
+        print(f"Saving final checkpoint to {checkpoint_path_epoch}...")
+        torch.save({
+                        "epoch": epoch,
+                        "inflow_fen": inflow_fen.state_dict(),
+                        "outflow_fen": outflow_fen.state_dict(),
+                        "opt": optimizer.state_dict(),
+                        "config": model_config,
+                        "train_config": train_params,
+                }, checkpoint_path_epoch)
+            
