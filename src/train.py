@@ -230,7 +230,8 @@ if __name__ == "__main__":
     # create data loaders
     # # # # # #
     # multi-channel feature processor
-    processor = DataProcessor(features)
+    interval_size = model_config.get('interval_time', 0.03)
+    processor = DataProcessor(features, interval_size = interval_size)
 
     with open(args.exp_config, 'r') as fi:
         data_config = json.load(fi)
