@@ -11,6 +11,59 @@ import random
 
 from utils.processor import DataProcessor
 
+# Hack in istarmap to multiprocessing for Python 3.8+
+import multiprocessing.pool as mpp
+from multiprocessing import cpu_count
+
+def istarmap(self, func, iterable, chunksize=1):
+    """starmap-version of imap
+    """
+    self._check_running()
+    if chunksize < 1:
+        raise ValueError(
+            "Chunksize must be 1+, not {0:n}".format(
+                chunksize))
+
+    task_batches = mpp.Pool._get_tasks(func, iterable, chunksize)
+    result = mpp.IMapIterator(self)
+    self._taskqueue.put(
+        (
+            self._guarded_task_generation(result._job,
+                                          mpp.starmapstar,
+                                          task_batches),
+            result._set_length
+        ))
+    return (item for chunk in result for item in chunk)
+
+mpp.Pool.istarmap = istarmap
+
+
+def process_sample(ID_sample_tuple, data_processor, window_kwargs, preproc_feats, times_processor):
+    ID, sample_tuple = ID_sample_tuple
+    processed_data = []
+
+    for sample in sample_tuple:
+        if preproc_feats:
+            sample = data_processor(sample)
+
+        if window_kwargs is not None:
+            if len(sample) > 0:
+                times = times_processor(sample)
+                windows = create_windows(times, sample, **window_kwargs)
+
+                if not preproc_feats:
+                    for i in range(len(windows)):
+                        windows[i] = data_processor(windows[i])
+                processed_data.append(windows)
+            else:
+                processed_data.append([np.empty((0, data_processor.input_channels)) for _ in range(len(windows))])
+        else:
+            if not preproc_feats:
+                sample = data_processor(sample)
+            processed_data.append([sample])
+
+    return ID, processed_data
+
 
 class BaseDataset(data.Dataset):
     """
@@ -41,49 +94,30 @@ class BaseDataset(data.Dataset):
         preproc_feats : bool
             If True, the data processor will be applied on samples before windowing.
         """
-
-        # useful info to have on hand...
+        
         self.window_count = window_kwargs['window_count'] if window_kwargs is not None else 1
 
-        self.IDs = []       # full list of unique identifiers for circuit streams
-        self.data = dict()  # link ID to stream content
+        self.IDs = []
+        self.data = dict()
 
         times_processor = DataProcessor(('times',))
 
-        # loop through the samples within each class
-        for ID,sample_tuple in tqdm(enumerate(samples), 
-                                    total=len(samples), 
-                                    dynamic_ncols=True, 
-                                    desc="Preparing dataset..."):
+        # Create a list of (ID, sample_tuple) pairs for parallel processing
+        id_sample_pairs = list(enumerate(samples))
 
-            self.IDs.append(ID)
-            self.data[ID] = []
+        # Use multiprocessing Pool to parallelize the processing
+        with mpp.Pool(processes=min(cpu_count(),8)) as pool:
+            for ID, processed_data in tqdm(
+                pool.istarmap(process_sample, 
+                             [(pair, data_processor, window_kwargs, preproc_feats, times_processor) for pair in id_sample_pairs],
+                             chunksize=16),
+                total=len(samples),
+                dynamic_ncols=True,
+                desc="Preparing dataset..."
+            ):
+                self.IDs.append(ID)
+                self.data[ID] = [torch.tensor(np.array(x)) for x in processed_data]
 
-            # loop through split circuits within each sample
-            for sample in sample_tuple:
-
-                if preproc_feats:  # apply processing before windowing if enabled
-                    sample = data_processor(sample)
-
-                # split the circuit data into windows if window_kwargs have been provided
-                if window_kwargs is not None:
-                    if len(sample) > 0:
-                        times = times_processor(sample)   # pkt times
-                        windows = create_windows(times, sample, **window_kwargs)  # windowed stream
-
-                        if not preproc_feats:  # apply processing if not yet performed
-                            # create multi-channel feature representation of windows independently
-                            for i in range(len(windows)):
-                                windows[i] = data_processor(windows[i])
-                        self.data[ID].append(windows)
-                    else:
-                        self.data[ID].append([torch.empty((0,data_processor.input_channels)) 
-                                              for _ in range(len(windows))])
-
-                else:  # no windowing
-                    if not preproc_feats:  # apply processing if not yet performed
-                        sample = data_processor(sample)
-                    self.data[ID].append([sample])
         self.IDs = np.array(self.IDs)
 
     def __len__(self):
@@ -481,6 +515,7 @@ def load_sample_text(pth):
                                 abs(float(sizedir)),        # size
                                 np.sign(int(sizedir))])     # dir
 
+    return np.array(sample)
     return torch.tensor(sample)
 
 
@@ -541,7 +576,8 @@ def load_dataset_pkl(pkl_file,
     samples = []
     for i in batch_list:
         for flow_pair in data[all_batches[i]]:
-            samples.append([torch.tensor(s) for s in flow_pair])
+            #samples.append([torch.tensor(s) for s in flow_pair])
+            samples.append([np.array(s) for s in flow_pair])
         
     return samples
 
