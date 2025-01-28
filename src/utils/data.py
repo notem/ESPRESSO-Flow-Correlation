@@ -47,16 +47,15 @@ def process_sample(ID_sample_tuple, data_processor, window_kwargs, preproc_feats
             sample = data_processor(sample)
 
         if window_kwargs is not None:
-            if len(sample) > 0:
-                times = times_processor(sample)
-                windows = create_windows(times, sample, **window_kwargs)
+            #if len(sample) > 0:
+            times = times_processor(sample)
+            windows = create_windows(times, sample, **window_kwargs)
 
-                if not preproc_feats:
-                    for i in range(len(windows)):
-                        windows[i] = data_processor(windows[i])
-                processed_data.append(windows)
-            else:
-                processed_data.append([np.empty((0, data_processor.input_channels)) for _ in range(len(windows))])
+            if not preproc_feats:
+                windows = [data_processor(w) for w in windows]
+            processed_data.append(windows)
+            #else:
+            #    processed_data.append([np.empty((0, data_processor.input_channels)) for _ in range(len(windows))])
         else:
             if not preproc_feats:
                 sample = data_processor(sample)
@@ -116,7 +115,7 @@ class BaseDataset(data.Dataset):
                 desc="Preparing dataset..."
             ):
                 self.IDs.append(ID)
-                self.data[ID] = [torch.tensor(np.array(x)) for x in processed_data]
+                self.data[ID] = [[torch.tensor(x) for x in xx] for xx in processed_data]
 
         self.IDs = np.array(self.IDs)
 
@@ -483,7 +482,7 @@ def create_windows(times, features,
 
             end = start + window_width
 
-            window_idx = torch.where(torch.logical_and(times >= start, times < end))[0]
+            window_idx = np.where(np.logical_and(times >= start, times < end))[0]
             window_features.append(features[window_idx])
 
     # add full stream as window
