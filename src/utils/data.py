@@ -93,11 +93,12 @@ class BaseDataset(data.Dataset):
         preproc_feats : bool
             If True, the data processor will be applied on samples before windowing.
         """
-        
+
+        # useful info to have on hand...
         self.window_count = window_kwargs['window_count'] if window_kwargs is not None else 1
 
-        self.IDs = []
-        self.data = dict()
+        self.IDs = []       # full list of unique identifiers for circuit streams
+        self.data = dict()  # link ID to stream content
 
         times_processor = DataProcessor(('times',))
 
@@ -483,6 +484,7 @@ def create_windows(times, features,
             end = start + window_width
 
             window_idx = np.where(np.logical_and(times >= start, times < end))[0]
+            window_idx = np.where(np.logical_and(times >= start, times < end))[0]
             window_features.append(features[window_idx])
 
     # add full stream as window
@@ -515,7 +517,6 @@ def load_sample_text(pth):
                                 np.sign(int(sizedir))])     # dir
 
     return np.array(sample)
-    return torch.tensor(sample)
 
 
 def load_dataset_text(root_dir,
@@ -575,7 +576,6 @@ def load_dataset_pkl(pkl_file,
     samples = []
     for i in batch_list:
         for flow_pair in data[all_batches[i]]:
-            #samples.append([torch.tensor(s) for s in flow_pair])
             samples.append([np.array(s) for s in flow_pair])
         
     return samples
